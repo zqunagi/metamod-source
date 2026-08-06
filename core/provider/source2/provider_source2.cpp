@@ -45,6 +45,50 @@ static ISource2ServerConfig* serverconfig = NULL;
 INetworkServerService* netservice = NULL;
 IEngineServiceMgr* enginesvcmgr = NULL;
 
+static void *
+QueryInterfaceWithTrace(const char *stage,
+						const char *factory_name,
+						CreateInterfaceFn factory,
+						const char *interface_name)
+{
+	int return_code = -1;
+	bool trace_enabled = mm_IsInterfaceTraceEnabled();
+	mm_LogInterfaceTrace(stage,
+		"QUERY ENTER factory=%s factory_ptr=%p interface=%s",
+		factory_name,
+		factory,
+		interface_name);
+	void *result = factory(interface_name, trace_enabled ? &return_code : NULL);
+	mm_LogInterfaceTrace(stage,
+		"QUERY LEAVE factory=%s interface=%s result=%p ret=%d",
+		factory_name,
+		interface_name,
+		result,
+		return_code);
+	return result;
+}
+
+template <typename MethodPointer>
+static void
+TraceInterfaceMethod(const char *stage,
+					 const char *interface_name,
+					 const char *method_name,
+					 void *object,
+					 MethodPointer method)
+{
+	if (!mm_IsInterfaceTraceEnabled())
+		return;
+
+	SourceHook::MemFuncInfo method_info;
+	method_info.isVirtual = false;
+	SourceHook::GetFuncInfo(method, method_info);
+	mm_LogInterfaceVTable(stage,
+		interface_name,
+		method_name,
+		object,
+		method_info.isVirtual ? method_info.vtblindex : -1);
+}
+
 SH_DECL_HOOK2_void(IServerGameClients, ClientCommand, SH_NOATTRIB, 0, CPlayerSlot, const CCommand&);
 SH_DECL_HOOK3_void(IEngineServiceMgr, RegisterLoopMode, SH_NOATTRIB, 0, const char *, ILoopModeFactory *, void **);
 SH_DECL_HOOK3_void(IEngineServiceMgr, UnregisterLoopMode, SH_NOATTRIB, 0, const char*, ILoopModeFactory*, void**);
@@ -60,31 +104,107 @@ SH_DECL_HOOK1(ISource2ServerConfig, AllowDedicatedServers, const, 0, bool, EUniv
 void Source2Provider::Notify_DLLInit_Pre(CreateInterfaceFn engineFactory,
 	CreateInterfaceFn serverFactory)
 {
-	engine = (IVEngineServer*)((engineFactory)(INTERFACEVERSION_VENGINESERVER, NULL));
+	mm_LogInterfaceTrace("C.PROVIDER.ENTER",
+		"engine_factory=%p server_factory=%p",
+		engineFactory,
+		serverFactory);
+
+	engine = (IVEngineServer*)QueryInterfaceWithTrace(
+		"C0.ENGINE",
+		"engine",
+		engineFactory,
+		INTERFACEVERSION_VENGINESERVER);
 	if (!engine)
 	{
+		mm_LogInterfaceTrace("C0.ENGINE.FATAL",
+			"interface=%s result=<null>",
+			INTERFACEVERSION_VENGINESERVER);
 		DisplayError("Could not find IVEngineServer! Metamod cannot load.");
 		return;
 	}
 
+	TraceInterfaceMethod("C0.VTABLE",
+		"IVEngineServer",
+		"GetServerGlobals",
+		engine,
+		&IVEngineServer::GetServerGlobals);
+	mm_LogInterfaceTrace("C0.CALL.ENTER", "method=IVEngineServer::GetServerGlobals object=%p", engine);
 	gpGlobals = engine->GetServerGlobals();
-	serverconfig = (ISource2ServerConfig*)((serverFactory)(INTERFACEVERSION_SERVERCONFIG, NULL));
-	netservice = (INetworkServerService*)((engineFactory)(NETWORKSERVERSERVICE_INTERFACE_VERSION, NULL));
-	enginesvcmgr = (IEngineServiceMgr*)((engineFactory)(ENGINESERVICEMGR_INTERFACE_VERSION, NULL));
+	mm_LogInterfaceTrace("C0.CALL.LEAVE",
+		"method=IVEngineServer::GetServerGlobals result=%p",
+		gpGlobals);
 
-	icvar = (ICvar*)((engineFactory)(CVAR_INTERFACE_VERSION, NULL));
+	serverconfig = (ISource2ServerConfig*)QueryInterfaceWithTrace(
+		"C1.SERVER_CONFIG",
+		"server",
+		serverFactory,
+		INTERFACEVERSION_SERVERCONFIG);
+	if (!serverconfig)
+	{
+		mm_LogInterfaceTrace("C1.SERVER_CONFIG.FATAL",
+			"interface=%s result=<null>",
+			INTERFACEVERSION_SERVERCONFIG);
+	}
+	netservice = (INetworkServerService*)QueryInterfaceWithTrace(
+		"C2.NETWORK_SERVICE",
+		"engine",
+		engineFactory,
+		NETWORKSERVERSERVICE_INTERFACE_VERSION);
+	if (!netservice)
+	{
+		mm_LogInterfaceTrace("C2.NETWORK_SERVICE.OPTIONAL_MISSING",
+			"interface=%s result=<null>",
+			NETWORKSERVERSERVICE_INTERFACE_VERSION);
+	}
+	enginesvcmgr = (IEngineServiceMgr*)QueryInterfaceWithTrace(
+		"C3.ENGINE_SERVICE_MGR",
+		"engine",
+		engineFactory,
+		ENGINESERVICEMGR_INTERFACE_VERSION);
+	if (!enginesvcmgr)
+	{
+		mm_LogInterfaceTrace("C3.ENGINE_SERVICE_MGR.FATAL",
+			"interface=%s result=<null>",
+			ENGINESERVICEMGR_INTERFACE_VERSION);
+	}
+
+	icvar = (ICvar*)QueryInterfaceWithTrace(
+		"C4.CVAR",
+		"engine",
+		engineFactory,
+		CVAR_INTERFACE_VERSION);
 	if (!icvar)
 	{
+		mm_LogInterfaceTrace("C4.CVAR.FATAL",
+			"interface=%s result=<null>",
+			CVAR_INTERFACE_VERSION);
 		DisplayError("Could not find ICvar! Metamod cannot load.");
 		return;
 	}
 
-	gameclients = (IServerGameClients*)(serverFactory(INTERFACEVERSION_SERVERGAMECLIENTS, NULL));
-	g_pFullFileSystem = baseFs = (IFileSystem*)((engineFactory)(FILESYSTEM_INTERFACE_VERSION, NULL));
+	gameclients = (IServerGameClients*)QueryInterfaceWithTrace(
+		"C5.GAME_CLIENTS",
+		"server",
+		serverFactory,
+		INTERFACEVERSION_SERVERGAMECLIENTS);
+	g_pFullFileSystem = baseFs = (IFileSystem*)QueryInterfaceWithTrace(
+		"C6.FILESYSTEM",
+		"engine",
+		engineFactory,
+		FILESYSTEM_INTERFACE_VERSION);
 	if (baseFs == NULL)
 	{
+		mm_LogInterfaceTrace("C6.FILESYSTEM.FATAL",
+			"interface=%s result=<null>",
+			FILESYSTEM_INTERFACE_VERSION);
 		mm_LogMessage("Unable to find \"%s\": .vdf files will not be parsed", FILESYSTEM_INTERFACE_VERSION);
 	}
+
+	TraceInterfaceMethod("C6.VTABLE", "IFileSystem", "GetSearchPathsForPathID", baseFs, &IFileSystem::GetSearchPathsForPathID);
+	TraceInterfaceMethod("C6.VTABLE", "IFileSystem", "RemoveSearchPath", baseFs, &IFileSystem::RemoveSearchPath);
+	TraceInterfaceMethod("C6.VTABLE", "IFileSystem", "RemoveSearchPaths", baseFs, &IFileSystem::RemoveSearchPaths);
+	TraceInterfaceMethod("C6.VTABLE", "IFileSystem", "GetSearchPath", baseFs, &IFileSystem::GetSearchPath);
+	TraceInterfaceMethod("C6.VTABLE", "IFileSystem", "AddSearchPath", baseFs, &IFileSystem::AddSearchPath);
 
 	// Since we have to be added as a Game path (cannot add GameBin directly), we
 	// automatically get added to other paths as well, including having the MM:S
@@ -115,38 +235,80 @@ void Source2Provider::Notify_DLLInit_Pre(CreateInterfaceFn engineFactory,
 	for(size_t id = 0; id < (sizeof(pathIds) / sizeof(pathIds[0])); id++)
 	{
 		CUtlVector<CUtlString> searchPaths;
+		mm_LogInterfaceTrace("C6.CALL.ENTER",
+			"method=IFileSystem::GetSearchPathsForPathID path_id=%s",
+			pathIds[id]);
 		baseFs->GetSearchPathsForPathID(pathIds[id], (GetSearchPathTypes_t)0, searchPaths);
+		mm_LogInterfaceTrace("C6.CALL.LEAVE",
+			"method=IFileSystem::GetSearchPathsForPathID path_id=%s count=%d",
+			pathIds[id],
+			searchPaths.Count());
 
 		FOR_EACH_VEC(searchPaths, i)
 		{
 			if(strstr(searchPaths[i].Get(), "metamod") != 0)
 			{
+				mm_LogInterfaceTrace("C6.CALL.ENTER",
+					"method=IFileSystem::RemoveSearchPath path_id=%s path=%s",
+					pathIds[id],
+					searchPaths[i].Get());
 				baseFs->RemoveSearchPath(searchPaths[i].Get(), pathIds[id]);
+				mm_LogInterfaceTrace("C6.CALL.LEAVE",
+					"method=IFileSystem::RemoveSearchPath path_id=%s",
+					pathIds[id]);
 			}
 		}
 	}
 
+	mm_LogInterfaceTrace("C6.CALL.ENTER", "method=IFileSystem::RemoveSearchPaths path_id=DEFAULT_WRITE_PATH");
 	baseFs->RemoveSearchPaths("DEFAULT_WRITE_PATH");
+	mm_LogInterfaceTrace("C6.CALL.LEAVE", "method=IFileSystem::RemoveSearchPaths path_id=DEFAULT_WRITE_PATH");
 
 	CBufferStringN<260> searchPath;
+	mm_LogInterfaceTrace("C6.CALL.ENTER", "method=IFileSystem::GetSearchPath path_id=GAME");
 	baseFs->GetSearchPath("GAME", (GetSearchPathTypes_t)0, searchPath, 1);
+	mm_LogInterfaceTrace("C6.CALL.LEAVE",
+		"method=IFileSystem::GetSearchPath path_id=GAME path=%s",
+		searchPath.Get());
+	mm_LogInterfaceTrace("C6.CALL.ENTER",
+		"method=IFileSystem::AddSearchPath path_id=DEFAULT_WRITE_PATH path=%s",
+		searchPath.Get());
 	baseFs->AddSearchPath(searchPath.Get(), "DEFAULT_WRITE_PATH");
+	mm_LogInterfaceTrace("C6.CALL.LEAVE", "method=IFileSystem::AddSearchPath path_id=DEFAULT_WRITE_PATH");
 
 	g_pCVar = icvar;
 
+	TraceInterfaceMethod("C4.VTABLE", "ICvar", "RegisterConCommand", icvar, &ICvar::RegisterConCommand);
+	TraceInterfaceMethod("C4.VTABLE", "ICvar", "RegisterConVar", icvar, &ICvar::RegisterConVar);
+	mm_LogInterfaceTrace("C4.CALL.ENTER", "method=ConVar_Register object=%p", icvar);
 	ConVar_Register(FCVAR_RELEASE);
+	mm_LogInterfaceTrace("C4.CALL.LEAVE", "method=ConVar_Register");
 
 	if (gameclients)
 	{
-		SH_ADD_HOOK(IServerGameClients, ClientCommand, gameclients, SH_MEMBER(this, &Source2Provider::Hook_ClientCommand), false);
+		TraceInterfaceMethod("C5.VTABLE", "IServerGameClients", "ClientCommand", gameclients, &IServerGameClients::ClientCommand);
+		mm_LogInterfaceTrace("C5.HOOK.ENTER", "method=IServerGameClients::ClientCommand object=%p", gameclients);
+		int hook_id = SH_ADD_HOOK(IServerGameClients, ClientCommand, gameclients, SH_MEMBER(this, &Source2Provider::Hook_ClientCommand), false);
+		mm_LogInterfaceTrace("C5.HOOK.LEAVE", "method=IServerGameClients::ClientCommand hook_id=%d", hook_id);
+	}
+	else
+	{
+		mm_LogInterfaceTrace("C5.HOOK.SKIP", "reason=interface-null");
 	}
 
 #ifdef SHOULD_OVERRIDE_ALLOWDEDICATED_SERVER
 	SH_ADD_VPHOOK(ISource2ServerConfig, AllowDedicatedServers, serverconfig, SH_MEMBER(this, &Source2Provider::Hook_AllowDedicatedServers), false);
 #endif
 
-	SH_ADD_HOOK(IEngineServiceMgr, RegisterLoopMode, enginesvcmgr, SH_MEMBER(this, &Source2Provider::Hook_RegisterLoopMode), false);
-	SH_ADD_HOOK(IEngineServiceMgr, UnregisterLoopMode, enginesvcmgr, SH_MEMBER(this, &Source2Provider::Hook_UnregisterLoopMode), false);
+	TraceInterfaceMethod("C3.VTABLE", "IEngineServiceMgr", "RegisterLoopMode", enginesvcmgr, &IEngineServiceMgr::RegisterLoopMode);
+	TraceInterfaceMethod("C3.VTABLE", "IEngineServiceMgr", "UnregisterLoopMode", enginesvcmgr, &IEngineServiceMgr::UnregisterLoopMode);
+	mm_LogInterfaceTrace("C3.HOOK.ENTER", "method=IEngineServiceMgr::RegisterLoopMode object=%p", enginesvcmgr);
+	int register_hook_id = SH_ADD_HOOK(IEngineServiceMgr, RegisterLoopMode, enginesvcmgr, SH_MEMBER(this, &Source2Provider::Hook_RegisterLoopMode), false);
+	mm_LogInterfaceTrace("C3.HOOK.LEAVE", "method=IEngineServiceMgr::RegisterLoopMode hook_id=%d", register_hook_id);
+	mm_LogInterfaceTrace("C3.HOOK.ENTER", "method=IEngineServiceMgr::UnregisterLoopMode object=%p", enginesvcmgr);
+	int unregister_hook_id = SH_ADD_HOOK(IEngineServiceMgr, UnregisterLoopMode, enginesvcmgr, SH_MEMBER(this, &Source2Provider::Hook_UnregisterLoopMode), false);
+	mm_LogInterfaceTrace("C3.HOOK.LEAVE", "method=IEngineServiceMgr::UnregisterLoopMode hook_id=%d", unregister_hook_id);
+	mm_LogInterfaceTrace("C.PROVIDER.LEAVE", "result=1");
 }
 
 void Source2Provider::Notify_DLLShutdown_Pre()
@@ -236,13 +398,30 @@ const char* Source2Provider::GetEngineDescription() const
 void Source2Provider::GetGamePath(char* pszBuffer, int len)
 {
 	CBufferStringN<MAX_PATH> buf;
+	TraceInterfaceMethod("C0.VTABLE", "IVEngineServer", "GetGameDir", engine, &IVEngineServer::GetGameDir);
+	mm_LogInterfaceTrace("C0.CALL.ENTER", "method=IVEngineServer::GetGameDir object=%p", engine);
 	engine->GetGameDir(buf);
+	mm_LogInterfaceTrace("C0.CALL.LEAVE",
+		"method=IVEngineServer::GetGameDir path=%s",
+		buf.Get());
 	ke::SafeSprintf(pszBuffer, len, "%s", buf.Get());
 }
 
 const char* Source2Provider::GetGameDescription()
 {
-	return serverconfig->GetGameDescription();
+	TraceInterfaceMethod("C1.VTABLE",
+		"ISource2ServerConfig",
+		"GetGameDescription",
+		serverconfig,
+		&ISource2ServerConfig::GetGameDescription);
+	mm_LogInterfaceTrace("C1.CALL.ENTER",
+		"method=ISource2ServerConfig::GetGameDescription object=%p",
+		serverconfig);
+	const char *description = serverconfig->GetGameDescription();
+	mm_LogInterfaceTrace("C1.CALL.LEAVE",
+		"method=ISource2ServerConfig::GetGameDescription result=%p",
+		description);
+	return description;
 }
 
 #ifdef SHOULD_OVERRIDE_ALLOWDEDICATED_SERVER
@@ -389,16 +568,30 @@ void LocalCommand_Meta(const CCommandContext &, const CCommand& args)
 
 void Source2Provider::Hook_RegisterLoopMode(const char *pszLoopModeName, ILoopModeFactory *pLoopModeFactory, void **ppGlobalPointer)
 {
+	mm_LogInterfaceTrace("C7.REGISTER_LOOP_MODE.ENTER",
+		"name=%s factory=%p global_pointer=%p",
+		pszLoopModeName ? pszLoopModeName : "<null>",
+		pLoopModeFactory,
+		ppGlobalPointer);
 	if (!strcmp(pszLoopModeName, "game"))
 	{
-		SH_ADD_HOOK(ILoopModeFactory, CreateLoopMode, pLoopModeFactory, SH_MEMBER(this, &Source2Provider::Hook_CreateLoopModePost), true);
-		SH_ADD_HOOK(ILoopModeFactory, DestroyLoopMode, pLoopModeFactory, SH_MEMBER(this, &Source2Provider::Hook_DestroyLoopMode), false);
+		TraceInterfaceMethod("C7.VTABLE", "ILoopModeFactory", "CreateLoopMode", pLoopModeFactory, &ILoopModeFactory::CreateLoopMode);
+		TraceInterfaceMethod("C7.VTABLE", "ILoopModeFactory", "DestroyLoopMode", pLoopModeFactory, &ILoopModeFactory::DestroyLoopMode);
+		mm_LogInterfaceTrace("C7.HOOK.ENTER", "method=ILoopModeFactory::CreateLoopMode object=%p", pLoopModeFactory);
+		int create_hook_id = SH_ADD_HOOK(ILoopModeFactory, CreateLoopMode, pLoopModeFactory, SH_MEMBER(this, &Source2Provider::Hook_CreateLoopModePost), true);
+		mm_LogInterfaceTrace("C7.HOOK.LEAVE", "method=ILoopModeFactory::CreateLoopMode hook_id=%d", create_hook_id);
+		mm_LogInterfaceTrace("C7.HOOK.ENTER", "method=ILoopModeFactory::DestroyLoopMode object=%p", pLoopModeFactory);
+		int destroy_hook_id = SH_ADD_HOOK(ILoopModeFactory, DestroyLoopMode, pLoopModeFactory, SH_MEMBER(this, &Source2Provider::Hook_DestroyLoopMode), false);
+		mm_LogInterfaceTrace("C7.HOOK.LEAVE", "method=ILoopModeFactory::DestroyLoopMode hook_id=%d", destroy_hook_id);
 
 		if (nullptr != m_pCallbacks)
 		{
 			m_pCallbacks->OnGameInit();
 		}
 	}
+	mm_LogInterfaceTrace("C7.REGISTER_LOOP_MODE.LEAVE",
+		"name=%s",
+		pszLoopModeName ? pszLoopModeName : "<null>");
 }
 
 void Source2Provider::Hook_UnregisterLoopMode(const char* pszLoopModeName, ILoopModeFactory* pLoopModeFactory, void** ppGlobalPointer)
@@ -415,8 +608,16 @@ void Source2Provider::Hook_UnregisterLoopMode(const char* pszLoopModeName, ILoop
 ILoopMode *Source2Provider::Hook_CreateLoopModePost()
 {
 	ILoopMode *pLoopMode = META_RESULT_ORIG_RET(ILoopMode *);
-	SH_ADD_HOOK(ILoopMode, LoopInit, pLoopMode, SH_MEMBER(this, &Source2Provider::Hook_LoopInitPost), true);
-	SH_ADD_HOOK(ILoopMode, LoopShutdown, pLoopMode, SH_MEMBER(this, &Source2Provider::Hook_LoopShutdownPost), true);
+	mm_LogInterfaceTrace("C8.CREATE_LOOP_MODE.ENTER", "loop_mode=%p", pLoopMode);
+	TraceInterfaceMethod("C8.VTABLE", "ILoopMode", "LoopInit", pLoopMode, &ILoopMode::LoopInit);
+	TraceInterfaceMethod("C8.VTABLE", "ILoopMode", "LoopShutdown", pLoopMode, &ILoopMode::LoopShutdown);
+	mm_LogInterfaceTrace("C8.HOOK.ENTER", "method=ILoopMode::LoopInit object=%p", pLoopMode);
+	int init_hook_id = SH_ADD_HOOK(ILoopMode, LoopInit, pLoopMode, SH_MEMBER(this, &Source2Provider::Hook_LoopInitPost), true);
+	mm_LogInterfaceTrace("C8.HOOK.LEAVE", "method=ILoopMode::LoopInit hook_id=%d", init_hook_id);
+	mm_LogInterfaceTrace("C8.HOOK.ENTER", "method=ILoopMode::LoopShutdown object=%p", pLoopMode);
+	int shutdown_hook_id = SH_ADD_HOOK(ILoopMode, LoopShutdown, pLoopMode, SH_MEMBER(this, &Source2Provider::Hook_LoopShutdownPost), true);
+	mm_LogInterfaceTrace("C8.HOOK.LEAVE", "method=ILoopMode::LoopShutdown hook_id=%d", shutdown_hook_id);
+	mm_LogInterfaceTrace("C8.CREATE_LOOP_MODE.LEAVE", "loop_mode=%p", pLoopMode);
 
 	// Post-hook. Ignored
 	return nullptr;
@@ -430,6 +631,10 @@ void Source2Provider::Hook_DestroyLoopMode(ILoopMode* pLoopMode)
 
 bool Source2Provider::Hook_LoopInitPost(KeyValues* pKeyValues, ILoopModePrerequisiteRegistry *pRegistry)
 {
+	mm_LogInterfaceTrace("C8.LOOP_INIT.ENTER",
+		"keyvalues=%p registry=%p",
+		pKeyValues,
+		pRegistry);
 	if (nullptr != m_pCallbacks)
 	{
 		m_pCallbacks->OnLevelInit(
@@ -441,17 +646,20 @@ bool Source2Provider::Hook_LoopInitPost(KeyValues* pKeyValues, ILoopModePrerequi
 			false
 		);
 	}
-	
+	mm_LogInterfaceTrace("C8.LOOP_INIT.LEAVE", "complete=1");
+
 	// Post-hook. Ignored
 	return true;
 }
 
 void Source2Provider::Hook_LoopShutdownPost()
 {
+	mm_LogInterfaceTrace("C8.LOOP_SHUTDOWN.ENTER", "complete=0");
 	if (nullptr != m_pCallbacks)
 	{
 		m_pCallbacks->OnLevelShutdown();
 	}
+	mm_LogInterfaceTrace("C8.LOOP_SHUTDOWN.LEAVE", "complete=1");
 }
 
 void Source2Provider::Hook_ClientCommand(CPlayerSlot nSlot, const CCommand& _cmd)

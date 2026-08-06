@@ -38,25 +38,39 @@ class GameDllBridge : public IGameDllBridge
 public:
 	virtual bool DLLInit_Pre(const gamedll_bridge_info *info, char *buffer, size_t maxlength)
 	{
+		mm_LogInterfaceTrace("C.BRIDGE.PRE.ENTER",
+			"engine_factory=%p server_factory=%p filesystem_factory=%p server=%p interface=%s version=%d",
+			info->engineFactory,
+			info->gsFactory,
+			info->fsFactory,
+			info->isgd,
+			info->dllInterfaceName ? info->dllInterfaceName : "<null>",
+			info->dllVersion);
 		server = (IServerGameDLL *) info->isgd;
 		g_Metamod.SetGameDLLInfo((CreateInterfaceFn)info->gsFactory,
 			info->dllInterfaceName,
 			info->dllVersion,
 			true);
 		g_Metamod.SetVSPListener(info->vsp_listener_path);
+		mm_LogInterfaceTrace("C.GLOBALS.ENTER", "server=%p", server);
 		mm_InitializeGlobals((CreateInterfaceFn) info->engineFactory,
 			(CreateInterfaceFn) info->physicsFactory,
 			(CreateInterfaceFn) info->fsFactory,
 			(CGlobalVars*) info->pGlobals);
+		mm_LogInterfaceTrace("C.GLOBALS.LEAVE", "globals=%p", gpGlobals);
 
+		mm_LogInterfaceTrace("C.GAMEINFO.ENTER", "detect=1");
 		if (!mm_DetectGameInformation())
 		{
+			mm_LogInterfaceTrace("C.GAMEINFO.LEAVE", "result=0");
 			UTIL_Format(buffer, maxlength, "Metamod:Source failed to detect game paths; cannot load.");
 			return false;
 		}
+		mm_LogInterfaceTrace("C.GAMEINFO.LEAVE", "result=1 path=%s", g_Metamod.GetBaseDir());
 
 		mm_InitializeForLoad();
 		mm_StartupMetamod(false);
+		mm_LogInterfaceTrace("C.BRIDGE.PRE.LEAVE", "result=1");
 
 		return true;
 	}
@@ -74,6 +88,9 @@ public:
 		assert(mfi.vtbloffs == 0);
 		assert(mfi.thisptroffs == 0);
 		*isgdUnload = mfi.vtblindex;
+		mm_LogInterfaceTrace("C.BRIDGE.POST",
+			"shutdown_slot=%d",
+			*isgdUnload);
 
 		g_PluginMngr.SetAllLoaded();
 	}
@@ -83,7 +100,9 @@ public:
 	}
 	virtual void Unload()
 	{
+		mm_LogInterfaceTrace("C.UNLOAD.ENTER", "plugins=%d", g_PluginMngr.GetPluginCount());
 		mm_UnloadMetamod();
+		mm_LogInterfaceTrace("C.UNLOAD.LEAVE", "complete=1");
 	}
 };
 

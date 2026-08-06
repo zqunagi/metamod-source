@@ -110,6 +110,20 @@ mm_DetectGameInformation();
 int
 mm_LogMessage(const char *msg, ...);
 
+bool
+mm_IsInterfaceTraceEnabled();
+
+void
+mm_LogInterfaceTrace(const char *stage, const char *message, ...);
+
+void
+mm_LogInterfaceVTable(const char *stage,
+					  const char *interface_name,
+					  const char *method_name,
+					  void *object,
+					  int slot,
+					  void *replacement = NULL);
+
 int
 mm_LoadPlugins(const char *filepath, const char *vdfpath);
 

@@ -24,6 +24,11 @@
  */
 
 #include <cstdio>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <sys/stat.h>
 
 #include "metamod_oslink.h"
@@ -92,12 +97,175 @@ static META_RES last_meta_res;
 static IServerPluginCallbacks *vsp_callbacks = NULL;
 static bool were_plugins_loaded = false;
 static bool g_bIsVspBridged = false;
+static char mm_interface_logfile[PATH_SIZE] = "metamod-interface.log";
 
 MetamodSource g_Metamod;
 PluginId g_PLID = Pl_Console;
 CSourceHookImpl g_SourceHook(mm_LogMessage);
 ISourceHook *g_SHPtr = &g_SourceHook;
 SourceMM::ISmmAPI *g_pMetamod = &g_Metamod;
+
+static void
+mm_InitInterfaceLogPath()
+{
+	static bool initialized = false;
+	if (initialized)
+		return;
+
+	initialized = true;
+
+	char module_path[PATH_SIZE];
+	if (!GetFileOfAddress((void *)mm_LogInterfaceTrace, module_path, sizeof(module_path)))
+		return;
+
+	char *last_slash = strrchr(module_path, PATH_SEP_CHAR);
+	if (!last_slash)
+		return;
+
+	last_slash[1] = '\0';
+	UTIL_Format(mm_interface_logfile,
+				sizeof(mm_interface_logfile),
+				"%smetamod-interface.log",
+				module_path);
+}
+
+bool
+mm_IsInterfaceTraceEnabled()
+{
+	const char *environment = std::getenv("MMS_INTERFACE_TRACE");
+	return environment && environment[0] && strcmp(environment, "0") != 0;
+}
+
+void
+mm_LogInterfaceTrace(const char *stage, const char *message, ...)
+{
+	if (!mm_IsInterfaceTraceEnabled())
+		return;
+
+	mm_InitInterfaceLogPath();
+
+	FILE *fp = fopen(mm_interface_logfile, "at");
+	if (!fp && (fp = fopen("metamod-interface.log", "at")) == NULL)
+		return;
+
+	time_t now = time(NULL);
+	char timestamp[64];
+	strftime(timestamp, sizeof(timestamp), "%m/%d/%Y - %H:%M:%S", localtime(&now));
+	static bool session_started = false;
+	if (!session_started)
+	{
+#if defined WIN32 || defined _WIN32
+		unsigned long process_id = GetCurrentProcessId();
+#else
+		unsigned long process_id = static_cast<unsigned long>(getpid());
+#endif
+		fprintf(fp,
+			"L %s: [core] [TRACE.START] pid=%lu pointer_size=%u source_engine=%d log=%s\n",
+			timestamp,
+			process_id,
+			(unsigned int)sizeof(void *),
+			SOURCE_ENGINE,
+			mm_interface_logfile);
+		session_started = true;
+	}
+	fprintf(fp, "L %s: [core] [%s] ", timestamp, stage ? stage : "TRACE");
+
+	va_list ap;
+	va_start(ap, message);
+	vfprintf(fp, message, ap);
+	va_end(ap);
+
+	fputc('\n', fp);
+	fflush(fp);
+	fclose(fp);
+}
+
+static bool
+mm_GetInterfaceTraceModuleInfo(void *address,
+							   char *module_path,
+							   size_t module_path_length,
+							   uintptr_t *module_base)
+{
+	if (!address)
+		return false;
+
+#if defined WIN32 || defined _WIN32
+	MEMORY_BASIC_INFORMATION memory_info;
+	if (!VirtualQuery(address, &memory_info, sizeof(memory_info)) || !memory_info.AllocationBase)
+		return false;
+
+	*module_base = reinterpret_cast<uintptr_t>(memory_info.AllocationBase);
+	if (!GetModuleFileNameA((HMODULE)memory_info.AllocationBase,
+						module_path,
+						static_cast<DWORD>(module_path_length)))
+	{
+		module_path[0] = '\0';
+	}
+	else
+	{
+		module_path[module_path_length - 1] = '\0';
+	}
+#else
+	Dl_info info;
+	if (!dladdr(address, &info) || !info.dli_fbase)
+		return false;
+
+	*module_base = reinterpret_cast<uintptr_t>(info.dli_fbase);
+	UTIL_Format(module_path,
+				module_path_length,
+				"%s",
+				info.dli_fname ? info.dli_fname : "<unknown>");
+#endif
+
+	return true;
+}
+
+void
+mm_LogInterfaceVTable(const char *stage,
+					  const char *interface_name,
+					  const char *method_name,
+					  void *object,
+					  int slot,
+					  void *replacement)
+{
+	if (!mm_IsInterfaceTraceEnabled())
+		return;
+
+	if (!object || slot < 0)
+	{
+		mm_LogInterfaceTrace(stage,
+			"interface=%s method=%s object=%p slot=%d target=<unavailable> replacement=%p",
+			interface_name,
+			method_name,
+			object,
+			slot,
+			replacement);
+		return;
+	}
+
+	void **vtable = *reinterpret_cast<void ***>(object);
+	void *target = vtable ? vtable[slot] : NULL;
+	char module_path[PATH_SIZE] = "<unknown>";
+	uintptr_t module_base = 0;
+	unsigned long long relative_address = 0;
+	if (mm_GetInterfaceTraceModuleInfo(target, module_path, sizeof(module_path), &module_base))
+	{
+		relative_address = static_cast<unsigned long long>(
+			reinterpret_cast<uintptr_t>(target) - module_base);
+	}
+
+	mm_LogInterfaceTrace(stage,
+		"interface=%s method=%s object=%p vtable=%p slot=%d target=%p module=%s rva=0x%llx replacement=%p",
+		interface_name,
+		method_name,
+		object,
+		vtable,
+		slot,
+		target,
+		module_path,
+		relative_address,
+		replacement);
+}
 
 /* Helper Macro */
 #define	IFACE_MACRO(orig,nam) \

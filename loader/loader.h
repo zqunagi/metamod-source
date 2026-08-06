@@ -123,6 +123,20 @@ mm_UnloadMetamodLibrary();
 extern void
 mm_LogFatal(const char *message, ...);
 
+extern bool
+mm_IsInterfaceTraceEnabled();
+
+extern void
+mm_LogInterfaceTrace(const char *stage, const char *message, ...);
+
+extern void
+mm_LogInterfaceVTable(const char *stage,
+					  const char *interface_name,
+					  const char *method_name,
+					  void *object,
+					  int slot,
+					  void *replacement = NULL);
+
 extern void
 mm_GetGameName(char *buffer, size_t size);
 

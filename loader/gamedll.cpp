@@ -277,6 +277,10 @@ class ISource2ServerConfig
 public:
 	virtual bool Connect(QueryValveInterface factory)
 	{
+		mm_LogInterfaceTrace("L0.CONNECT.ENTER",
+			"interface=Source2ServerConfig factory=%p object=%p",
+			factory,
+			config_iface);
 		g_bridge_info.engineFactory = factory;
 		g_bridge_info.fsFactory = factory;
 		g_bridge_info.physicsFactory = factory;
@@ -306,12 +310,17 @@ public:
 		}
 
 		mm_PatchConnect(false);
+		mm_LogInterfaceTrace("L0.CONNECT.LEAVE", "result=%d", result ? 1 : 0);
 
 		return result;
 	}
 
 	virtual void Disconnect()
 	{
+		mm_LogInterfaceTrace("L0.DISCONNECT.ENTER",
+			"config=%p bridge=%p",
+			config_iface,
+			gamedll_bridge);
 		gamedll_bridge->Unload();
 		gamedll_bridge = NULL;
 		mm_UnloadMetamodLibrary();
@@ -340,6 +349,7 @@ public:
 
 		mm_UnloadLibrary(gamedll_lib);
 		gamedll_lib = NULL;
+		mm_LogInterfaceTrace("L0.DISCONNECT.LEAVE", "complete=1");
 	}
 
 #if defined _WIN32
@@ -360,6 +370,11 @@ public:
 
 	virtual InitReturnVal_t Init()
 	{
+		mm_LogInterfaceTrace("L1.INIT.ENTER",
+			"game=%s interface=%s object=%p",
+			game_name,
+			gamedll_iface_name,
+			gamedll_iface);
 		if (!stricmp("citadel", game_name))
 		{
 			mm_backend = MMBackend_Deadlock;
@@ -403,16 +418,25 @@ public:
 			g_bridge_info.vsp_listener_path = mm_path;
 
 			strcpy(error, "Unknown error");
+			mm_LogInterfaceTrace("L2.BRIDGE.PRE.ENTER", "bridge=%p", gamedll_bridge);
 			if (!gamedll_bridge->DLLInit_Pre(&g_bridge_info, error, sizeof(error)))
 			{
 				gamedll_bridge = NULL;
 				mm_UnloadMetamodLibrary();
 				mm_LogFatal("Unknown error loading Metamod for engine %d: %s", mm_backend, error);	
 			}
+			else
+			{
+				mm_LogInterfaceTrace("L2.BRIDGE.PRE.LEAVE", "result=1");
+			}
 		}
 
 		/* Call the original */
 		InitReturnVal_t result;
+		mm_LogInterfaceTrace("L1.ORIGINAL_INIT.ENTER",
+			"object=%p target=%p",
+			gamedll_iface,
+			isgd_orig_init);
 		{
 			union
 			{
@@ -433,6 +457,7 @@ public:
 #endif
 			result = (((VEmptyClass *)gamedll_iface)->*u.mfpnew)();
 		}
+		mm_LogInterfaceTrace("L1.ORIGINAL_INIT.LEAVE", "result=%d", (int)result);
 
 		/**
 		 * :TODO: possible logic hole here, what happens if the gamedll REALLY returns false? 
@@ -447,12 +472,17 @@ public:
 		}
 		else if (gamedll_bridge != NULL)
 		{
+			mm_LogInterfaceTrace("L2.BRIDGE.POST.ENTER", "bridge=%p", gamedll_bridge);
 			gamedll_bridge->DLLInit_Post(&isgd_shutdown_index);
+			mm_LogInterfaceTrace("L2.BRIDGE.POST.LEAVE",
+				"shutdown_slot=%d",
+				isgd_shutdown_index);
 			assert(isgd_shutdown_index != -1);
 			mm_PatchDllShutdown();
 		}
 
 		mm_PatchDllInit(false);
+		mm_LogInterfaceTrace("L1.INIT.LEAVE", "result=%d", (int)result);
 
 		return result;
 	}
@@ -634,6 +664,12 @@ mm_PatchDllInit(bool patch)
 		vtable_src = (void **)*(void **)&isgd_thunk;
 	}
 	vtable_dest = (void **)*(void **)gamedll_iface;
+	mm_LogInterfaceVTable(patch ? "L1.HOOK_INIT.ENTER" : "L1.HOOK_INIT.RESTORE",
+		g_is_source2 ? "ISource2Server" : "IServerGameDLL",
+		g_is_source2 ? "Init" : "DLLInit",
+		gamedll_iface,
+		mfp.vtblindex,
+		patch ? vtable_src[mfp.vtblindex] : isgd_orig_init);
 
 	SourceHook::SetMemAccess(&vtable_dest[mfp.vtblindex],
 							 sizeof(void*),
@@ -651,6 +687,9 @@ mm_PatchDllInit(bool patch)
 		vtable_dest[mfp.vtblindex] = isgd_orig_init;
 		isgd_orig_init = NULL;
 	}
+	mm_LogInterfaceTrace(patch ? "L1.HOOK_INIT.LEAVE" : "L1.HOOK_INIT.RESTORED",
+		"slot=%d",
+		mfp.vtblindex);
 }
 
 static void
@@ -685,7 +724,14 @@ mm_PatchDllShutdown()
 	}
 
 	isgd_orig_shutdown = vtable_dest[isgd_shutdown_index];
+	mm_LogInterfaceVTable("L0.HOOK_DISCONNECT.ENTER",
+		g_is_source2 ? "ISource2ServerConfig" : "IServerGameDLL",
+		g_is_source2 ? "Disconnect" : "DLLShutdown",
+		g_is_source2 ? (void *)config_iface : (void *)gamedll_iface,
+		isgd_shutdown_index,
+		vtable_src[mfp.vtblindex]);
 	vtable_dest[isgd_shutdown_index] = vtable_src[mfp.vtblindex];
+	mm_LogInterfaceTrace("L0.HOOK_DISCONNECT.LEAVE", "slot=%d", isgd_shutdown_index);
 }
 
 #if defined _WIN32
@@ -704,6 +750,12 @@ mm_PatchAllowDedicated(bool patch)
 
 	vtable_src = (void **) *(void **) &is2sc_thunk;
 	vtable_dest = (void **) *(void **) config_iface;
+	mm_LogInterfaceVTable(patch ? "L0.HOOK_ALLOW_DEDICATED.ENTER" : "L0.HOOK_ALLOW_DEDICATED.RESTORE",
+		"ISource2ServerConfig",
+		"AllowDedicatedServers",
+		config_iface,
+		is2sc_allowdedi_index,
+		patch ? vtable_src[mfp.vtblindex] : is2sc_orig_allowdedi);
 
 	SourceHook::SetMemAccess(&vtable_dest[is2sc_allowdedi_index],
 		sizeof(void*),
@@ -721,6 +773,9 @@ mm_PatchAllowDedicated(bool patch)
 		vtable_dest[is2sc_allowdedi_index] = is2sc_orig_allowdedi;
 		is2sc_orig_allowdedi = NULL;
 	}
+	mm_LogInterfaceTrace(patch ? "L0.HOOK_ALLOW_DEDICATED.LEAVE" : "L0.HOOK_ALLOW_DEDICATED.RESTORED",
+		"slot=%d",
+		is2sc_allowdedi_index);
 }
 #endif
 
@@ -739,6 +794,12 @@ mm_PatchConnect(bool patch)
 
 	vtable_src = (void **) *(void **) &is2sc_thunk;
 	vtable_dest = (void **) *(void **) config_iface;
+	mm_LogInterfaceVTable(patch ? "L0.HOOK_CONNECT.ENTER" : "L0.HOOK_CONNECT.RESTORE",
+		"ISource2ServerConfig",
+		"Connect",
+		config_iface,
+		mfp.vtblindex,
+		patch ? vtable_src[mfp.vtblindex] : is2sc_orig_connect);
 
 	SourceHook::SetMemAccess(&vtable_dest[mfp.vtblindex],
 		sizeof(void*),
@@ -756,12 +817,17 @@ mm_PatchConnect(bool patch)
 		vtable_dest[mfp.vtblindex] = is2sc_orig_connect;
 		is2sc_orig_connect = NULL;
 	}
+	mm_LogInterfaceTrace(patch ? "L0.HOOK_CONNECT.LEAVE" : "L0.HOOK_CONNECT.RESTORED",
+		"slot=%d",
+		mfp.vtblindex);
 }
 
 
 void *
 mm_GameDllRequest(const char *name, int *ret)
 {
+	mm_LogInterfaceTrace("L.REQUEST.ENTER", "name=%s", name ? name : "<null>");
+
 	if (strncmp(name, "Source2Server", 13) == 0 && !mm_GetCommandArgument("-dedicated") && !mm_GetCommandArgument("-insecure"))
 	{
 		mm_LogFatal("Metamod:Source requires -dedicated or -insecure on the command line to be able to load");
@@ -773,6 +839,7 @@ mm_GameDllRequest(const char *name, int *ret)
 
 	if (strncmp(name, "Source2ServerConfig", 19) == 0)
 	{
+		mm_LogInterfaceTrace("L0.QUERY.ENTER", "name=%s", name);
 		g_is_source2 = true;
 		if (!mm_DetectGameInformation())
 		{
@@ -798,7 +865,18 @@ mm_GameDllRequest(const char *name, int *ret)
 			qvi = (QueryValveInterface)mm_GetLibAddress(lib, "CreateInterface");
 			if (qvi == NULL)
 				continue;
+			mm_LogInterfaceTrace("L0.CANDIDATE",
+				"path=%s library=%p factory=%p",
+				gamedll_paths[i],
+				lib,
+				qvi);
 			ptr = qvi(name, ret);
+			mm_LogInterfaceTrace("L0.CANDIDATE.RESULT",
+				"path=%s name=%s result=%p ret=%d",
+				gamedll_paths[i],
+				name,
+				ptr,
+				ret ? *ret : -1);
 			if (ptr != NULL)
 			{
 				gamedll_libs[i] = NULL;
@@ -812,6 +890,11 @@ mm_GameDllRequest(const char *name, int *ret)
 			gamedll_lib = lib;
 			config_iface = (ISource2ServerConfig *) ptr;
 			gamedll_qvi = qvi;
+			mm_LogInterfaceTrace("L0.QUERY.LEAVE",
+				"name=%s result=%p factory=%p",
+				name,
+				ptr,
+				qvi);
 
 			mm_PatchConnect(true);
 #if defined _WIN32
@@ -822,10 +905,29 @@ mm_GameDllRequest(const char *name, int *ret)
 				*ret = 0;
 			return ptr;
 		}
+		mm_LogInterfaceTrace("L0.QUERY.FATAL",
+			"name=%s result=<null> candidates=%u",
+			name,
+			gamedll_path_count);
 	}
 	else if (strncmp(name, "Source2Server", 13) == 0 && atoi(&name[13]) != 0)
 	{
+		mm_LogInterfaceTrace("L1.QUERY.ENTER",
+			"name=%s factory=%p",
+			name,
+			gamedll_qvi);
 		gamedll_iface = (IServerGameDLL *)gamedll_qvi(name, ret);
+		mm_LogInterfaceTrace("L1.QUERY.LEAVE",
+			"name=%s result=%p ret=%d",
+			name,
+			gamedll_iface,
+			ret ? *ret : -1);
+		if (!gamedll_iface)
+		{
+			mm_LogInterfaceTrace("L1.QUERY.FATAL",
+				"name=%s result=<null>",
+				name);
+		}
 		strncpy(gamedll_iface_name, name, sizeof(gamedll_iface_name));
 		gamedll_version = atoi(&name[13]);
 		mm_PatchDllInit(true);

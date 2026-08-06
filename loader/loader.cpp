@@ -42,7 +42,185 @@
 
 static HMODULE mm_library = NULL;
 static char mm_fatal_logfile[PLATFORM_MAX_PATH] = "metamod-fatal.log";
+static char mm_interface_logfile[PLATFORM_MAX_PATH] = "metamod-interface.log";
 MetamodBackend mm_backend = MMBackend_UNKNOWN;
+
+static void
+mm_InitInterfaceLogPath()
+{
+	static bool initialized = false;
+	if (initialized)
+		return;
+
+	initialized = true;
+
+	char module_path[PLATFORM_MAX_PATH];
+	if (!mm_GetFileOfAddress((void *)mm_LogInterfaceTrace, module_path, sizeof(module_path)))
+		return;
+
+	char *last_slash = strrchr(module_path, PATH_SEP_CHAR);
+	if (!last_slash)
+		return;
+
+	last_slash[1] = '\0';
+	mm_Format(mm_interface_logfile,
+			  sizeof(mm_interface_logfile),
+			  "%smetamod-interface.log",
+			  module_path);
+}
+
+bool
+mm_IsInterfaceTraceEnabled()
+{
+	static int enabled = -1;
+	if (enabled != -1)
+		return enabled == 1;
+
+	const char *environment = std::getenv("MMS_INTERFACE_TRACE");
+	enabled = (environment && environment[0] && strcmp(environment, "0") != 0) ? 1 : 0;
+
+	if (!enabled && mm_GetCommandArgument("-interface-trace"))
+	{
+		enabled = 1;
+#if defined _WIN32
+		SetEnvironmentVariableA("MMS_INTERFACE_TRACE", "1");
+#else
+		setenv("MMS_INTERFACE_TRACE", "1", 1);
+#endif
+	}
+
+	return enabled == 1;
+}
+
+void
+mm_LogInterfaceTrace(const char *stage, const char *message, ...)
+{
+	if (!mm_IsInterfaceTraceEnabled())
+		return;
+
+	mm_InitInterfaceLogPath();
+
+	FILE *fp = fopen(mm_interface_logfile, "at");
+	if (!fp && (fp = fopen("metamod-interface.log", "at")) == NULL)
+		return;
+
+	time_t now = time(NULL);
+	char timestamp[64];
+	strftime(timestamp, sizeof(timestamp), "%m/%d/%Y - %H:%M:%S", localtime(&now));
+	static bool session_started = false;
+	if (!session_started)
+	{
+#if defined _WIN32
+		unsigned long process_id = GetCurrentProcessId();
+#else
+		unsigned long process_id = static_cast<unsigned long>(getpid());
+#endif
+		fprintf(fp,
+			"L %s: [loader] [TRACE.START] pid=%lu pointer_size=%u log=%s\n",
+			timestamp,
+			process_id,
+			(unsigned int)sizeof(void *),
+			mm_interface_logfile);
+		session_started = true;
+	}
+	fprintf(fp, "L %s: [loader] [%s] ", timestamp, stage ? stage : "TRACE");
+
+	va_list ap;
+	va_start(ap, message);
+	vfprintf(fp, message, ap);
+	va_end(ap);
+
+	fputc('\n', fp);
+	fflush(fp);
+	fclose(fp);
+}
+
+static bool
+mm_GetInterfaceTraceModuleInfo(void *address,
+							   char *module_path,
+							   size_t module_path_length,
+							   uintptr_t *module_base)
+{
+	if (!address)
+		return false;
+
+#if defined _WIN32
+	MEMORY_BASIC_INFORMATION memory_info;
+	if (!VirtualQuery(address, &memory_info, sizeof(memory_info)) || !memory_info.AllocationBase)
+		return false;
+
+	*module_base = reinterpret_cast<uintptr_t>(memory_info.AllocationBase);
+	if (!GetModuleFileNameA((HMODULE)memory_info.AllocationBase,
+						module_path,
+						static_cast<DWORD>(module_path_length)))
+	{
+		module_path[0] = '\0';
+	}
+	else
+	{
+		module_path[module_path_length - 1] = '\0';
+	}
+#else
+	Dl_info info;
+	if (!dladdr(address, &info) || !info.dli_fbase)
+		return false;
+
+	*module_base = reinterpret_cast<uintptr_t>(info.dli_fbase);
+	mm_Format(module_path,
+			  module_path_length,
+			  "%s",
+			  info.dli_fname ? info.dli_fname : "<unknown>");
+#endif
+
+	return true;
+}
+
+void
+mm_LogInterfaceVTable(const char *stage,
+					  const char *interface_name,
+					  const char *method_name,
+					  void *object,
+					  int slot,
+					  void *replacement)
+{
+	if (!mm_IsInterfaceTraceEnabled())
+		return;
+
+	if (!object || slot < 0)
+	{
+		mm_LogInterfaceTrace(stage,
+			"interface=%s method=%s object=%p slot=%d target=<unavailable> replacement=%p",
+			interface_name,
+			method_name,
+			object,
+			slot,
+			replacement);
+		return;
+	}
+
+	void **vtable = *reinterpret_cast<void ***>(object);
+	void *target = vtable ? vtable[slot] : NULL;
+	char module_path[PLATFORM_MAX_PATH] = "<unknown>";
+	uintptr_t module_base = 0;
+	unsigned long long relative_address = 0;
+	if (mm_GetInterfaceTraceModuleInfo(target, module_path, sizeof(module_path), &module_base))
+	{
+		relative_address = static_cast<unsigned long long>(
+			reinterpret_cast<uintptr_t>(target) - module_base);
+	}
+
+	mm_LogInterfaceTrace(stage,
+		"interface=%s method=%s object=%p vtable=%p slot=%d target=%p module=%s rva=0x%llx replacement=%p",
+		interface_name,
+		method_name,
+		object,
+		vtable,
+		slot,
+		target,
+		module_path,
+		relative_address,
+		replacement);
+}
 
 extern void
 mm_LogFatal(const char *message, ...)
@@ -151,7 +329,17 @@ mm_LoadMetamodLibrary(MetamodBackend backend, char *buffer, size_t maxlength)
 			  "metamod.%s" LIBRARY_MINEXT,
 			  backend_names[backend]);
 
+	mm_LogInterfaceTrace("L2.CORE.LOAD.ENTER",
+		"backend=%d path=%s",
+		backend,
+		mm_path);
 	mm_library = (HMODULE)mm_LoadLibrary(mm_path, buffer, maxlength);
+	mm_LogInterfaceTrace("L2.CORE.LOAD.LEAVE",
+		"backend=%d path=%s handle=%p error=%s",
+		backend,
+		mm_path,
+		mm_library,
+		mm_library ? "<none>" : buffer);
 
 	return (mm_library != NULL);
 }
@@ -172,11 +360,17 @@ mm_UnloadMetamodLibrary()
 EXPORT void *
 CreateInterface(const char *name, int *ret)
 {
+	mm_LogInterfaceTrace("L.API.QUERY.ENTER", "name=%s", name ? name : "<null>");
+
 	/* If we've got a VSP bridge, do nothing. */
 	if (vsp_bridge != NULL)
 	{
 		if (ret != NULL)
 			*ret = 1;
+		mm_LogInterfaceTrace("L.API.QUERY.LEAVE",
+			"name=%s result=<null> ret=%d reason=vsp-bridge",
+			name ? name : "<null>",
+			ret ? *ret : -1);
 		return NULL;
 	}
 
@@ -194,11 +388,22 @@ CreateInterface(const char *name, int *ret)
 	else
 	{
 		/* If we've got a gamedll bridge, forward the request. */
-		return gamedll_bridge->QueryInterface(name, ret);
+		ptr = gamedll_bridge->QueryInterface(name, ret);
+		mm_LogInterfaceTrace("L.API.QUERY.LEAVE",
+			"name=%s result=%p ret=%d source=gamedll-bridge",
+			name ? name : "<null>",
+			ptr,
+			ret ? *ret : -1);
+		return ptr;
 	}
 
 	if (ret != NULL)
 		*ret = (ptr != NULL) ? 0 : 1;
+	mm_LogInterfaceTrace("L.API.QUERY.LEAVE",
+		"name=%s result=%p ret=%d",
+		name ? name : "<null>",
+		ptr,
+		ret ? *ret : -1);
 
 	return ptr;
 }
