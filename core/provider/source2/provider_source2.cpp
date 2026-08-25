@@ -443,12 +443,37 @@ void Source2Provider::ConsolePrint(const char* str)
 
 void Source2Provider::ClientConsolePrint(MMSPlayer_t client, const char* message)
 {
+	// Called per-message at runtime, so only record the vtable slot on first use.
+	static bool traced = false;
+	if (!traced)
+	{
+		traced = true;
+		TraceInterfaceMethod("C0.VTABLE",
+			"IVEngineServer",
+			"ClientPrintf",
+			engine,
+			&IVEngineServer::ClientPrintf);
+	}
 	engine->ClientPrintf(client, message);
 }
 
 void Source2Provider::ServerCommand(const char* cmd)
 {
+	static bool traced = false;
+	if (!traced)
+	{
+		traced = true;
+		TraceInterfaceMethod("C0.VTABLE",
+			"IVEngineServer",
+			"ServerCommand",
+			engine,
+			&IVEngineServer::ServerCommand);
+	}
+	mm_LogInterfaceTrace("C0.CALL.ENTER",
+		"method=IVEngineServer::ServerCommand cmd=%s",
+		cmd ? cmd : "<null>");
 	engine->ServerCommand(cmd);
+	mm_LogInterfaceTrace("C0.CALL.LEAVE", "method=IVEngineServer::ServerCommand");
 }
 
 const char* Source2Provider::GetConVarString(MetamodSourceConVar *convar)
@@ -494,6 +519,16 @@ bool Source2Provider::RegisterConVar(ProviderConVar *pVar)
 
 void Source2Provider::UnregisterConCommand(ProviderConCommand *pCommand)
 {
+	static bool traced = false;
+	if (!traced)
+	{
+		traced = true;
+		TraceInterfaceMethod("C4.VTABLE",
+			"ICvar",
+			"UnregisterConCommandCallbacks",
+			icvar,
+			&ICvar::UnregisterConCommandCallbacks);
+	}
 	icvar->UnregisterConCommandCallbacks(*pCommand);
 
 	// Hide command from the search, as it would still be available otherwise
@@ -502,6 +537,16 @@ void Source2Provider::UnregisterConCommand(ProviderConCommand *pCommand)
 
 void Source2Provider::UnregisterConVar(ProviderConVar *pVar)
 {
+	static bool traced = false;
+	if (!traced)
+	{
+		traced = true;
+		TraceInterfaceMethod("C4.VTABLE",
+			"ICvar",
+			"UnregisterConVarCallbacks",
+			icvar,
+			&ICvar::UnregisterConVarCallbacks);
+	}
 	icvar->UnregisterConVarCallbacks(*pVar);
 
 	// Invalidate cvar for future use
@@ -525,7 +570,22 @@ MetamodSourceConVar* Source2Provider::CreateConVar(const char* name,
 		newflags |= FCVAR_SPONLY;
 	}
 
+	mm_LogInterfaceTrace("C4.CVAR.NEW.ENTER",
+		"method=CConVar<CUtlString> name=%s default=%s flags=0x%llx",
+		name ? name : "<null>",
+		defval ? defval : "<null>",
+		(unsigned long long)newflags);
+
 	CConVar<CUtlString> *pVar = new CConVar<CUtlString>( name, newflags, help, defval );
+
+	// A failed registration leaves the ref's access index invalid. The SDK aborts on
+	// this internally, but log it either way so the trace shows the cause rather than
+	// stopping at ENTER with no explanation.
+	mm_LogInterfaceTrace("C4.CVAR.NEW.LEAVE",
+		"method=CConVar<CUtlString> name=%s convar=%p valid_ref=%d",
+		name ? name : "<null>",
+		pVar,
+		pVar ? (int)pVar->IsValidRef() : -1);
 	
 	m_RegisteredConVars.push_back( pVar );
 
@@ -586,7 +646,9 @@ void Source2Provider::Hook_RegisterLoopMode(const char *pszLoopModeName, ILoopMo
 
 		if (nullptr != m_pCallbacks)
 		{
+			mm_LogInterfaceTrace("C7.CALLBACK.ENTER", "method=OnGameInit");
 			m_pCallbacks->OnGameInit();
+			mm_LogInterfaceTrace("C7.CALLBACK.LEAVE", "method=OnGameInit");
 		}
 	}
 	mm_LogInterfaceTrace("C7.REGISTER_LOOP_MODE.LEAVE",
@@ -596,12 +658,19 @@ void Source2Provider::Hook_RegisterLoopMode(const char *pszLoopModeName, ILoopMo
 
 void Source2Provider::Hook_UnregisterLoopMode(const char* pszLoopModeName, ILoopModeFactory* pLoopModeFactory, void** ppGlobalPointer)
 {
+	mm_LogInterfaceTrace("C7.UNREGISTER_LOOP_MODE.ENTER",
+		"name=%s factory=%p",
+		pszLoopModeName ? pszLoopModeName : "<null>",
+		pLoopModeFactory);
 	if (!strcmp(pszLoopModeName, "game"))
 	{
 		SH_REMOVE_HOOK(ILoopModeFactory, CreateLoopMode, pLoopModeFactory, SH_MEMBER(this, &Source2Provider::Hook_CreateLoopModePost), true);
 		SH_REMOVE_HOOK(ILoopModeFactory, DestroyLoopMode, pLoopModeFactory, SH_MEMBER(this, &Source2Provider::Hook_DestroyLoopMode), false);
 	}
 
+	mm_LogInterfaceTrace("C7.UNREGISTER_LOOP_MODE.LEAVE",
+		"name=%s",
+		pszLoopModeName ? pszLoopModeName : "<null>");
 	RETURN_META(MRES_IGNORED);
 }
 
@@ -625,8 +694,10 @@ ILoopMode *Source2Provider::Hook_CreateLoopModePost()
 
 void Source2Provider::Hook_DestroyLoopMode(ILoopMode* pLoopMode)
 {
+	mm_LogInterfaceTrace("C8.DESTROY_LOOP_MODE.ENTER", "loop_mode=%p", pLoopMode);
 	SH_REMOVE_HOOK(ILoopMode, LoopInit, pLoopMode, SH_MEMBER(this, &Source2Provider::Hook_LoopInitPost), true);
 	SH_REMOVE_HOOK(ILoopMode, LoopShutdown, pLoopMode, SH_MEMBER(this, &Source2Provider::Hook_LoopShutdownPost), true);
+	mm_LogInterfaceTrace("C8.DESTROY_LOOP_MODE.LEAVE", "loop_mode=%p", pLoopMode);
 }
 
 bool Source2Provider::Hook_LoopInitPost(KeyValues* pKeyValues, ILoopModePrerequisiteRegistry *pRegistry)
@@ -637,14 +708,30 @@ bool Source2Provider::Hook_LoopInitPost(KeyValues* pKeyValues, ILoopModePrerequi
 		pRegistry);
 	if (nullptr != m_pCallbacks)
 	{
+		// Read the KeyValues up front, separately from the callback, so the trace
+		// tells a bad KeyValues layout apart from a plugin failing in OnLevelInit.
+		mm_LogInterfaceTrace("C8.LOOP_INIT.KV.ENTER", "keyvalues=%p", pKeyValues);
+		const char *pszLevelName = pKeyValues->GetString("levelname");
+		const char *pszPrevLevel = pKeyValues->GetString("previouslevel");
+		const char *pszLandmark = pKeyValues->GetString("landmarkname");
+		bool bLoadMap = pKeyValues->GetBool("loadmap");
+		mm_LogInterfaceTrace("C8.LOOP_INIT.KV.LEAVE",
+			"level=%s prev=%s landmark=%s loadmap=%d",
+			pszLevelName ? pszLevelName : "<null>",
+			pszPrevLevel ? pszPrevLevel : "<null>",
+			pszLandmark ? pszLandmark : "<null>",
+			(int)bLoadMap);
+
+		mm_LogInterfaceTrace("C8.CALLBACK.ENTER", "method=OnLevelInit");
 		m_pCallbacks->OnLevelInit(
-			pKeyValues->GetString("levelname"),
+			pszLevelName,
 			"",
-			pKeyValues->GetString("previouslevel"),
-			pKeyValues->GetString("landmarkname"),
-			pKeyValues->GetBool("loadmap"),
+			pszPrevLevel,
+			pszLandmark,
+			bLoadMap,
 			false
 		);
+		mm_LogInterfaceTrace("C8.CALLBACK.LEAVE", "method=OnLevelInit");
 	}
 	mm_LogInterfaceTrace("C8.LOOP_INIT.LEAVE", "complete=1");
 
@@ -657,7 +744,9 @@ void Source2Provider::Hook_LoopShutdownPost()
 	mm_LogInterfaceTrace("C8.LOOP_SHUTDOWN.ENTER", "complete=0");
 	if (nullptr != m_pCallbacks)
 	{
+		mm_LogInterfaceTrace("C8.CALLBACK.ENTER", "method=OnLevelShutdown");
 		m_pCallbacks->OnLevelShutdown();
+		mm_LogInterfaceTrace("C8.CALLBACK.LEAVE", "method=OnLevelShutdown");
 	}
 	mm_LogInterfaceTrace("C8.LOOP_SHUTDOWN.LEAVE", "complete=1");
 }
@@ -668,10 +757,15 @@ void Source2Provider::Hook_ClientCommand(CPlayerSlot nSlot, const CCommand& _cmd
 
 	if (strcmp(cmd.GetArg(0), "meta") == 0)
 	{
+		mm_LogInterfaceTrace("C5.CLIENT_COMMAND.ENTER",
+			"argc=%u args=%s",
+			cmd.GetArgCount(),
+			cmd.GetArgString() ? cmd.GetArgString() : "<null>");
 		if (nullptr != m_pCallbacks)
 		{
 			m_pCallbacks->OnCommand_ClientMeta(nSlot, &cmd);
 		}
+		mm_LogInterfaceTrace("C5.CLIENT_COMMAND.LEAVE", "");
 		
 		RETURN_META(MRES_SUPERCEDE);
 	}

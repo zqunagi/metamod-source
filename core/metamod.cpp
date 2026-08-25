@@ -303,13 +303,21 @@ static class ProviderCallbacks : public IMetamodSourceProviderCallbacks
 {
 	virtual void OnGameInit() override
 	{
+		mm_LogInterfaceTrace("C.CB.GAMEINIT.ENTER", "already_init=%d", (int)is_game_init);
 		if (is_game_init)
+		{
+			mm_LogInterfaceTrace("C.CB.GAMEINIT.LEAVE", "skipped=1");
 			return;
+		}
 
 		provider->DisplayDevMsg("MMS: OnGameInit\n");
 
 		if (vsp_load_requested)
+		{
+			mm_LogInterfaceTrace("C.VSP.INIT.ENTER", "");
 			InitializeVSP();
+			mm_LogInterfaceTrace("C.VSP.INIT.LEAVE", "");
+		}
 
 		if (g_bIsVspBridged && !were_plugins_loaded)
 		{
@@ -319,18 +327,26 @@ static class ProviderCallbacks : public IMetamodSourceProviderCallbacks
 		}
 
 		is_game_init = true;
+		mm_LogInterfaceTrace("C.CB.GAMEINIT.LEAVE", "skipped=0");
 	}
 
 	virtual void OnLevelInit(char const* pMapName, char const* pMapEntities, char const* pOldLevel,
 		char const* pLandmarkName, bool loadGame, bool background) override
 	{
+		mm_LogInterfaceTrace("C.CB.LEVELINIT.ENTER",
+			"map=%s prev=%s landmark=%s",
+			pMapName ? pMapName : "<null>",
+			pOldLevel ? pOldLevel : "<null>",
+			pLandmarkName ? pLandmarkName : "<null>");
 		provider->DisplayDevMsg("MMS: LevelInit\n");
 
 		ITER_EVENT(OnLevelInit, (pMapName, pMapEntities, pOldLevel, pLandmarkName, loadGame, background));
+		mm_LogInterfaceTrace("C.CB.LEVELINIT.LEAVE", "map=%s", pMapName ? pMapName : "<null>");
 	}
 
 	virtual void OnLevelShutdown() override
 	{
+		mm_LogInterfaceTrace("C.CB.LEVELSHUTDOWN.ENTER", "first_level=%d", (int)in_first_level);
 		provider->DisplayDevMsg("MMS: LevelShutdown\n");
 
 		if (g_bIsVspBridged && !were_plugins_loaded)
@@ -660,7 +676,14 @@ DoInitialPluginLoads()
 
 	g_Metamod.PathFormat(filepath, sizeof(filepath), "%s/%s", mod_path.c_str(), pluginFile);
 	g_Metamod.PathFormat(vdfpath, sizeof(vdfpath), "%s/%s", mod_path.c_str(), mmBaseDir);
+	mm_LogInterfaceTrace("C.PLUGINS.FILE.ENTER",
+		"plugins_file=%s vdf_dir=%s",
+		filepath,
+		vdfpath);
 	mm_LoadPlugins(filepath, vdfpath);
+	mm_LogInterfaceTrace("C.PLUGINS.FILE.LEAVE",
+		"loaded=%d",
+		g_PluginMngr.GetPluginCount());
 }
 
 void
@@ -674,14 +697,19 @@ mm_StartupMetamod(bool is_vsp_load)
 		METAMOD_VERSION,
 		is_vsp_load ? "V" : "");
 
-	metamod_version = provider->CreateConVar("metamod_version", 
-		METAMOD_VERSION, 
+	mm_LogInterfaceTrace("C.CVAR.CREATE.ENTER", "name=metamod_version");
+	metamod_version = provider->CreateConVar("metamod_version",
+		METAMOD_VERSION,
 		"Metamod:Source Version",
 		ConVarFlag_Notify|ConVarFlag_SpOnly);
+	mm_LogInterfaceTrace("C.CVAR.CREATE.LEAVE", "name=metamod_version convar=%p", metamod_version);
 
+	mm_LogInterfaceTrace("C.CVAR.SET.ENTER", "name=metamod_version value=%s", buffer);
 	provider->SetConVarString(metamod_version, buffer);
+	mm_LogInterfaceTrace("C.CVAR.SET.LEAVE", "name=metamod_version");
 
-	mm_pluginsfile = provider->CreateConVar("mm_pluginsfile", 
+	mm_LogInterfaceTrace("C.CVAR.CREATE.ENTER", "name=mm_pluginsfile");
+	mm_pluginsfile = provider->CreateConVar("mm_pluginsfile",
 #if defined WIN32 || defined _WIN32
 		"addons\\metamod\\metaplugins.ini", 
 #else
@@ -689,7 +717,9 @@ mm_StartupMetamod(bool is_vsp_load)
 #endif
 		"Metamod:Source Plugins File",
 		ConVarFlag_SpOnly);
+	mm_LogInterfaceTrace("C.CVAR.CREATE.LEAVE", "name=mm_pluginsfile convar=%p", mm_pluginsfile);
 
+	mm_LogInterfaceTrace("C.CVAR.CREATE.ENTER", "name=mm_basedir");
 	mm_basedir = provider->CreateConVar("mm_basedir",
 #if defined __linux__ || defined __APPLE__
 		"addons/metamod",
@@ -698,12 +728,15 @@ mm_StartupMetamod(bool is_vsp_load)
 #endif
 		"Metamod:Source Base Folder",
 		ConVarFlag_SpOnly);
-	
+	mm_LogInterfaceTrace("C.CVAR.CREATE.LEAVE", "name=mm_basedir convar=%p", mm_basedir);
+
 	g_bIsVspBridged = is_vsp_load;
 
 	if (!is_vsp_load)
 	{
+		mm_LogInterfaceTrace("C.PLUGINS.LOAD.ENTER", "");
 		DoInitialPluginLoads();
+		mm_LogInterfaceTrace("C.PLUGINS.LOAD.LEAVE", "");
 		in_first_level = true;
 	}
 }

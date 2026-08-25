@@ -68,14 +68,21 @@ public:
 		}
 		mm_LogInterfaceTrace("C.GAMEINFO.LEAVE", "result=1 path=%s", g_Metamod.GetBaseDir());
 
+		mm_LogInterfaceTrace("C.INITLOAD.ENTER", "gs_factory=%p", info->gsFactory);
 		mm_InitializeForLoad();
+		mm_LogInterfaceTrace("C.INITLOAD.LEAVE", "");
+
+		mm_LogInterfaceTrace("C.STARTUP.ENTER", "vsp_load=0");
 		mm_StartupMetamod(false);
+		mm_LogInterfaceTrace("C.STARTUP.LEAVE", "");
+
 		mm_LogInterfaceTrace("C.BRIDGE.PRE.LEAVE", "result=1");
 
 		return true;
 	}
 	virtual void DLLInit_Post(int *isgdUnload)
 	{
+		mm_LogInterfaceTrace("C.BRIDGE.POST.ENTER", "");
 		SourceHook::MemFuncInfo mfi;
 
 		mfi.isVirtual = false;
@@ -92,11 +99,20 @@ public:
 			"shutdown_slot=%d",
 			*isgdUnload);
 
+		mm_LogInterfaceTrace("C.PLUGINS.SETALLLOADED.ENTER", "plugins=%d", g_PluginMngr.GetPluginCount());
 		g_PluginMngr.SetAllLoaded();
+		mm_LogInterfaceTrace("C.PLUGINS.SETALLLOADED.LEAVE", "");
+		mm_LogInterfaceTrace("C.BRIDGE.POST.LEAVE", "");
 	}
 	virtual void *QueryInterface(const char *iface, int *ret)
 	{
-		return g_Metamod.GetServerFactory(true)(iface, ret);
+		mm_LogInterfaceTrace("C.BRIDGE.QUERY.ENTER", "interface=%s", iface ? iface : "<null>");
+		void *result = g_Metamod.GetServerFactory(true)(iface, ret);
+		mm_LogInterfaceTrace("C.BRIDGE.QUERY.LEAVE",
+			"interface=%s result=%p",
+			iface ? iface : "<null>",
+			result);
+		return result;
 	}
 	virtual void Unload()
 	{
