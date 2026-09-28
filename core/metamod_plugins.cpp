@@ -25,6 +25,10 @@
 
 #include <cstdio>
 #include <memory>
+#include <list>
+#include <set>
+#include <mutex>
+#include <stdio.h>
 
 #include "amtl/am-string.h"
 #include "metamod_oslink.h"
@@ -39,9 +43,54 @@
 
 using namespace SourceMM;
 
+struct Unloader {
+	Unloader(HINSTANCE module, std::set<KHook::HookID_t> hooks) : _lib(module) {
+		_hooks = hooks;
+
+		// Add invalid hook, so it doesn't delete the class early
+		_hooks.insert(KHook::INVALID_HOOK);
+
+		for (auto id : hooks) {
+			KHook::RemoveHook(id, true, reinterpret_cast<void(*)(KHook::HookID_t,void*)>(&Unloader::HookRemoval), this);
+		}
+	}
+
+	void Check() {
+		_mutex.lock();
+
+		_hooks.erase(KHook::INVALID_HOOK);
+		auto size = _hooks.size();
+
+		_mutex.unlock();
+
+		if (size == 0) {
+			dlclose(_lib);
+			delete this;
+		}
+	}
+
+private:
+	static void HookRemoval(KHook::HookID_t id, Unloader* context) {
+		context->_mutex.lock();
+		context->_hooks.erase(id);
+
+		auto size = context->_hooks.size();
+		context->_mutex.unlock();
+
+		if (size == 0) {
+			dlclose(context->_lib);
+			delete context;
+		}
+	}
+
+	std::mutex _mutex;
+	std::set<KHook::HookID_t> _hooks;
+	HINSTANCE _lib;
+};
+
 #define ITER_PLEVENT(evn, plid) \
 	CPluginManager::CPlugin *_Xpl; \
-	SourceHook::List<IMetamodListener *>::iterator event; \
+	std::list<IMetamodListener *>::iterator event; \
 	IMetamodListener *api; \
 	for (PluginIter iter = g_PluginMngr._begin(); iter != g_PluginMngr._end(); iter++) { \
 		_Xpl = (*iter); \
@@ -59,8 +108,6 @@ MetamodVersionInfo GlobVersionInfo =
 {
 	METAMOD_API_MAJOR,
 	METAMOD_API_MINOR,
-	SH_IFACE_VERSION,
-	SH_IMPL_VERSION,
 	PLAPI_MIN_VERSION,
 	METAMOD_PLAPI_VERSION,
 	SOURCE_ENGINE_UNKNOWN,
@@ -75,7 +122,7 @@ CPluginManager::CPluginManager()
 
 CPluginManager::~CPluginManager()
 {
-	SourceHook::List<CNameAlias *>::iterator iter;
+	std::list<CNameAlias *>::iterator iter;
 
 	for (iter = m_Aliases.begin(); iter != m_Aliases.end(); iter++)
 	{
@@ -87,7 +134,7 @@ CPluginManager::~CPluginManager()
 
 const char *CPluginManager::LookupAlias(const char *alias)
 {
-	SourceHook::List<CNameAlias *>::iterator iter;
+	std::list<CNameAlias *>::iterator iter;
 	CNameAlias *p;
 
 	for (iter = m_Aliases.begin(); iter != m_Aliases.end(); iter++)
@@ -102,19 +149,19 @@ const char *CPluginManager::LookupAlias(const char *alias)
 	return NULL;
 }
 
-SourceHook::List<CNameAlias *>::iterator CPluginManager::_alias_begin()
+std::list<CNameAlias *>::iterator CPluginManager::_alias_begin()
 {
 	return m_Aliases.begin();
 }
 
-SourceHook::List<CNameAlias *>::iterator CPluginManager::_alias_end()
+std::list<CNameAlias *>::iterator CPluginManager::_alias_end()
 {
 	return m_Aliases.end();
 }
 
 void CPluginManager::SetAlias(const char *alias, const char *value)
 {
-	SourceHook::List<CNameAlias *>::iterator iter;
+	std::list<CNameAlias *>::iterator iter;
 	CNameAlias *p;
 
 	for (iter = m_Aliases.begin(); iter != m_Aliases.end(); iter++)
@@ -149,6 +196,12 @@ void CPluginManager::SetAlias(const char *alias, const char *value)
 CPluginManager::CPlugin::CPlugin() : m_Id(0), m_Source(0), m_API(NULL), m_Lib(NULL), m_UnloadFn(NULL)
 {
 
+}
+
+CPluginManager::CPlugin::~CPlugin()
+{
+	auto unloader = new Unloader(m_Lib, std::move(m_khook.m_hooks));
+	unloader->Check();
 }
 
 PluginId CPluginManager::Load(const char *file, PluginId source, bool &already, char *error, size_t maxlen)
@@ -387,37 +440,6 @@ const char *CPluginManager::GetStatusText(CPlugin *pl)
 	}
 }
 
-struct Unloader : public SourceHook::Impl::UnloadListener
-{
-	CPluginManager::CPlugin *plugin_;
-	bool destroy_;
-
-	Unloader(CPluginManager::CPlugin *plugin, bool destroy)
-	  : plugin_(plugin), destroy_(destroy)
-	{ }
-
-	void ReadyToUnload(SourceHook::Plugin plug)
-	{
-		if (plugin_->m_UnloadFn != NULL)
-			plugin_->m_UnloadFn();
-
-		if(plugin_->m_Lib)
-			dlclose(plugin_->m_Lib);
-
-		if (destroy_)
-		{
-			delete plugin_;
-		}
-		else
-		{
-			plugin_->m_Lib = NULL;
-			plugin_->m_API = NULL;
-		}
-
-		delete this;
-	}
-};
-
 CPluginManager::CPlugin *CPluginManager::_Load(const char *file, PluginId source, char *error, size_t maxlen)
 {
 	std::unique_ptr<FILE, decltype(&::fclose)> fp(nullptr, ::fclose);
@@ -556,7 +578,11 @@ CPluginManager::CPlugin *CPluginManager::_Load(const char *file, PluginId source
 				{
 					if (error)
 					{
-						if (api == 13)
+						if (api == 17)
+						{
+							UTIL_Format(error, maxlen, "Plugin uses old SourceHook Metamod build, probably 1.12.x or an early 2.0 version (%d < %d).", api, PLAPI_MIN_VERSION);
+						}
+						else if (api == 13)
 						{
 							UTIL_Format(error, maxlen, "Plugin uses experimental Metamod build, probably 1.6.x (%d < %d)", api, PLAPI_MIN_VERSION);
 						}
@@ -602,7 +628,7 @@ CPluginManager::CPlugin *CPluginManager::_Load(const char *file, PluginId source
 	{
 		pl->m_Events.clear();
 		UnregAllConCmds(pl);
-		g_SourceHook.UnloadPlugin(pl->m_Id, new Unloader(pl, false));
+		//g_SourceHook.UnloadPlugin(pl->m_Id, new Unloader(pl, false));
 	}
 
 	return pl;
@@ -634,8 +660,7 @@ bool CPluginManager::_Unload(CPluginManager::CPlugin *pl, bool force, char *erro
 				}
 			}
 
-			//Make sure to detach it from sourcehook!
-			g_SourceHook.UnloadPlugin(pl->m_Id, new Unloader(pl, true));
+			delete pl;
 			return true;
 		}
 	} else {
@@ -675,7 +700,7 @@ bool CPluginManager::_Pause(CPluginManager::CPlugin *pl, char *error, size_t max
 	{
 		if (pl->m_API->Pause(error, maxlen))
 		{
-			g_SourceHook.PausePlugin(pl->m_Id);
+			//g_SourceHook.PausePlugin(pl->m_Id);
 			pl->m_Status = Pl_Paused;
 
 			return true;
@@ -703,7 +728,7 @@ bool CPluginManager::_Unpause(CPluginManager::CPlugin *pl, char *error, size_t m
 	{
 		if (pl->m_API->Unpause(error, maxlen))
 		{
-			g_SourceHook.UnpausePlugin(pl->m_Id);
+			//g_SourceHook.UnpausePlugin(pl->m_Id);
 			pl->m_Status = Pl_Running;
 
 			return true;
