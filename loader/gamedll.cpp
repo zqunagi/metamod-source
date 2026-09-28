@@ -578,8 +578,8 @@ mm_PatchDllInit(bool patch)
 		g_is_source2 ? "ISource2Server" : "IServerGameDLL",
 		g_is_source2 ? "Init" : "DLLInit",
 		gamedll_iface,
-		mfp.vtblindex,
-		patch ? vtable_src[mfp.vtblindex] : isgd_orig_init);
+		src_mfp,
+		patch ? vtable_src[src_mfp] : isgd_orig_init);
 
 	KHook::Memory::SetAccess(&vtable_dest[src_mfp],
 							 sizeof(void*),
@@ -599,7 +599,7 @@ mm_PatchDllInit(bool patch)
 	}
 	mm_LogInterfaceTrace(patch ? "L1.HOOK_INIT.LEAVE" : "L1.HOOK_INIT.RESTORED",
 		"slot=%d",
-		mfp.vtblindex);
+		src_mfp);
 }
 
 static void
@@ -636,8 +636,7 @@ mm_PatchDllShutdown()
 		g_is_source2 ? "Disconnect" : "DLLShutdown",
 		g_is_source2 ? (void *)config_iface : (void *)gamedll_iface,
 		isgd_shutdown_index,
-		vtable_src[mfp.vtblindex]);
-	vtable_dest[isgd_shutdown_index] = vtable_src[mfp.vtblindex];
+		vtable_src[isgd_shutdown_index]);
 	mm_LogInterfaceTrace("L0.HOOK_DISCONNECT.LEAVE", "slot=%d", isgd_shutdown_index);
 }
 
@@ -651,18 +650,12 @@ mm_PatchAllowDedicated(bool patch)
 	auto vtable_src = *(void***) &is2sc_thunk;
 	auto vtable_dest = *(void ***) config_iface;
 
-	assert(mfp.isVirtual);
-	assert(mfp.thisptroffs == 0);
-	assert(mfp.vtbloffs == 0);
-
-	vtable_src = (void **) *(void **) &is2sc_thunk;
-	vtable_dest = (void **) *(void **) config_iface;
 	mm_LogInterfaceVTable(patch ? "L0.HOOK_ALLOW_DEDICATED.ENTER" : "L0.HOOK_ALLOW_DEDICATED.RESTORE",
 		"ISource2ServerConfig",
 		"AllowDedicatedServers",
 		config_iface,
 		is2sc_allowdedi_index,
-		patch ? vtable_src[mfp.vtblindex] : is2sc_orig_allowdedi);
+		patch ? vtable_src[is2sc_allowdedi_index] : is2sc_orig_allowdedi);
 	KHook::Memory::SetAccess(&vtable_dest[is2sc_allowdedi_index],
 		sizeof(void*),
 		KHook::Memory::Flags::READ | KHook::Memory::Flags::WRITE | KHook::Memory::Flags::EXECUTE);
@@ -694,18 +687,12 @@ mm_PatchConnect(bool patch)
 	auto vtable_src = *(void***) &is2sc_thunk;
 	auto vtable_dest = *(void ***) config_iface;
 
-	assert(mfp.isVirtual);
-	assert(mfp.thisptroffs == 0);
-	assert(mfp.vtbloffs == 0);
-
-	vtable_src = (void **) *(void **) &is2sc_thunk;
-	vtable_dest = (void **) *(void **) config_iface;
 	mm_LogInterfaceVTable(patch ? "L0.HOOK_CONNECT.ENTER" : "L0.HOOK_CONNECT.RESTORE",
 		"ISource2ServerConfig",
 		"Connect",
 		config_iface,
-		mfp.vtblindex,
-		patch ? vtable_src[mfp.vtblindex] : is2sc_orig_connect);
+		index,
+		patch ? vtable_src[index] : is2sc_orig_connect);
 	KHook::Memory::SetAccess(&vtable_dest[index],
 		sizeof(void*),
 		KHook::Memory::Flags::READ | KHook::Memory::Flags::WRITE | KHook::Memory::Flags::EXECUTE);
@@ -724,7 +711,7 @@ mm_PatchConnect(bool patch)
 	}
 	mm_LogInterfaceTrace(patch ? "L0.HOOK_CONNECT.LEAVE" : "L0.HOOK_CONNECT.RESTORED",
 		"slot=%d",
-		mfp.vtblindex);
+		index);
 }
 
 

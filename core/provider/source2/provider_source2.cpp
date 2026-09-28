@@ -44,15 +44,6 @@ static ISource2ServerConfig* serverconfig = NULL;
 INetworkServerService* netservice = NULL;
 IEngineServiceMgr* enginesvcmgr = NULL;
 
-Source2Provider::Source2Provider() :
-	m_RegisterLoopMode(&IEngineServiceMgr::RegisterLoopMode, this, &Source2Provider::Hook_RegisterLoopMode, nullptr),
-	m_UnregisterLoopMode(&IEngineServiceMgr::UnregisterLoopMode, this, &Source2Provider::Hook_UnregisterLoopMode, nullptr),
-	m_CreateLoopMode(&ILoopModeFactory::CreateLoopMode, this, nullptr, &Source2Provider::Hook_CreateLoopModePost),
-	m_DestroyLoopMode(&ILoopModeFactory::DestroyLoopMode, this, nullptr, &Source2Provider::Hook_DestroyLoopMode),
-	m_LoopInit(&ILoopMode::LoopInit, this, nullptr, &Source2Provider::Hook_LoopInitPost),
-	m_LoopShutdown(&ILoopMode::LoopShutdown, this, nullptr, &Source2Provider::Hook_LoopShutdownPost),
-	m_ClientCommand(&IServerGameClients::ClientCommand, this, &Source2Provider::Hook_ClientCommand, nullptr)
-
 static void *
 QueryInterfaceWithTrace(const char *stage,
 						const char *factory_name,
@@ -87,24 +78,21 @@ TraceInterfaceMethod(const char *stage,
 	if (!mm_IsInterfaceTraceEnabled())
 		return;
 
-	SourceHook::MemFuncInfo method_info;
-	method_info.isVirtual = false;
-	SourceHook::GetFuncInfo(method, method_info);
 	mm_LogInterfaceVTable(stage,
 		interface_name,
 		method_name,
 		object,
-		method_info.isVirtual ? method_info.vtblindex : -1);
+		KHook::GetVtableIndex(method));
 }
 
-SH_DECL_HOOK2_void(IServerGameClients, ClientCommand, SH_NOATTRIB, 0, CPlayerSlot, const CCommand&);
-SH_DECL_HOOK3_void(IEngineServiceMgr, RegisterLoopMode, SH_NOATTRIB, 0, const char *, ILoopModeFactory *, void **);
-SH_DECL_HOOK3_void(IEngineServiceMgr, UnregisterLoopMode, SH_NOATTRIB, 0, const char*, ILoopModeFactory*, void**);
-SH_DECL_HOOK0(ILoopModeFactory, CreateLoopMode, SH_NOATTRIB, 0, ILoopMode *);
-SH_DECL_HOOK1_void(ILoopModeFactory, DestroyLoopMode, SH_NOATTRIB, 0, ILoopMode *);
-SH_DECL_HOOK2(ILoopMode, LoopInit, SH_NOATTRIB, 0, bool, KeyValues*, ILoopModePrerequisiteRegistry *);
-SH_DECL_HOOK0_void(ILoopMode, LoopShutdown, SH_NOATTRIB, 0);
-
+Source2Provider::Source2Provider() :
+	m_RegisterLoopMode(&IEngineServiceMgr::RegisterLoopMode, this, &Source2Provider::Hook_RegisterLoopMode, nullptr),
+	m_UnregisterLoopMode(&IEngineServiceMgr::UnregisterLoopMode, this, &Source2Provider::Hook_UnregisterLoopMode, nullptr),
+	m_CreateLoopMode(&ILoopModeFactory::CreateLoopMode, this, nullptr, &Source2Provider::Hook_CreateLoopModePost),
+	m_DestroyLoopMode(&ILoopModeFactory::DestroyLoopMode, this, nullptr, &Source2Provider::Hook_DestroyLoopMode),
+	m_LoopInit(&ILoopMode::LoopInit, this, nullptr, &Source2Provider::Hook_LoopInitPost),
+	m_LoopShutdown(&ILoopMode::LoopShutdown, this, nullptr, &Source2Provider::Hook_LoopShutdownPost),
+	m_ClientCommand(&IServerGameClients::ClientCommand, this, &Source2Provider::Hook_ClientCommand, nullptr)
 #ifdef SHOULD_OVERRIDE_ALLOWDEDICATED_SERVER
 	,m_AllowDedicatedServers(&ISource2ServerConfig::AllowDedicatedServers, this, &Source2Provider::Hook_AllowDedicatedServers, nullptr)
 #endif
@@ -296,11 +284,10 @@ void Source2Provider::Notify_DLLInit_Pre(CreateInterfaceFn engineFactory,
 
 	if (gameclients)
 	{
-		m_ClientCommand.Add(gameclients);
 		TraceInterfaceMethod("C5.VTABLE", "IServerGameClients", "ClientCommand", gameclients, &IServerGameClients::ClientCommand);
 		mm_LogInterfaceTrace("C5.HOOK.ENTER", "method=IServerGameClients::ClientCommand object=%p", gameclients);
-		int hook_id = SH_ADD_HOOK(IServerGameClients, ClientCommand, gameclients, SH_MEMBER(this, &Source2Provider::Hook_ClientCommand), false);
-		mm_LogInterfaceTrace("C5.HOOK.LEAVE", "method=IServerGameClients::ClientCommand hook_id=%d", hook_id);
+		m_ClientCommand.Add(gameclients);
+		mm_LogInterfaceTrace("C5.HOOK.LEAVE", "method=IServerGameClients::ClientCommand");
 	}
 	else
 	{
@@ -308,20 +295,20 @@ void Source2Provider::Notify_DLLInit_Pre(CreateInterfaceFn engineFactory,
 	}
 
 #ifdef SHOULD_OVERRIDE_ALLOWDEDICATED_SERVER
+	TraceInterfaceMethod("C1.VTABLE", "ISource2ServerConfig", "AllowDedicatedServers", serverconfig, &ISource2ServerConfig::AllowDedicatedServers);
+	mm_LogInterfaceTrace("C1.HOOK.ENTER", "method=ISource2ServerConfig::AllowDedicatedServers object=%p", serverconfig);
 	m_AllowDedicatedServers.AddGlobal(serverconfig);
+	mm_LogInterfaceTrace("C1.HOOK.LEAVE", "method=ISource2ServerConfig::AllowDedicatedServers");
 #endif
-
-	m_RegisterLoopMode.Add(enginesvcmgr);
-	m_UnregisterLoopMode.Add(enginesvcmgr);
 
 	TraceInterfaceMethod("C3.VTABLE", "IEngineServiceMgr", "RegisterLoopMode", enginesvcmgr, &IEngineServiceMgr::RegisterLoopMode);
 	TraceInterfaceMethod("C3.VTABLE", "IEngineServiceMgr", "UnregisterLoopMode", enginesvcmgr, &IEngineServiceMgr::UnregisterLoopMode);
 	mm_LogInterfaceTrace("C3.HOOK.ENTER", "method=IEngineServiceMgr::RegisterLoopMode object=%p", enginesvcmgr);
-	int register_hook_id = SH_ADD_HOOK(IEngineServiceMgr, RegisterLoopMode, enginesvcmgr, SH_MEMBER(this, &Source2Provider::Hook_RegisterLoopMode), false);
-	mm_LogInterfaceTrace("C3.HOOK.LEAVE", "method=IEngineServiceMgr::RegisterLoopMode hook_id=%d", register_hook_id);
+	m_RegisterLoopMode.Add(enginesvcmgr);
+	mm_LogInterfaceTrace("C3.HOOK.LEAVE", "method=IEngineServiceMgr::RegisterLoopMode");
 	mm_LogInterfaceTrace("C3.HOOK.ENTER", "method=IEngineServiceMgr::UnregisterLoopMode object=%p", enginesvcmgr);
-	int unregister_hook_id = SH_ADD_HOOK(IEngineServiceMgr, UnregisterLoopMode, enginesvcmgr, SH_MEMBER(this, &Source2Provider::Hook_UnregisterLoopMode), false);
-	mm_LogInterfaceTrace("C3.HOOK.LEAVE", "method=IEngineServiceMgr::UnregisterLoopMode hook_id=%d", unregister_hook_id);
+	m_UnregisterLoopMode.Add(enginesvcmgr);
+	mm_LogInterfaceTrace("C3.HOOK.LEAVE", "method=IEngineServiceMgr::UnregisterLoopMode");
 	mm_LogInterfaceTrace("C.PROVIDER.LEAVE", "result=1");
 }
 
@@ -653,12 +640,7 @@ KHook::Return<void> Source2Provider::Hook_RegisterLoopMode(IEngineServiceMgr*, c
 		m_DestroyLoopMode.Add(pLoopModeFactory);
 		TraceInterfaceMethod("C7.VTABLE", "ILoopModeFactory", "CreateLoopMode", pLoopModeFactory, &ILoopModeFactory::CreateLoopMode);
 		TraceInterfaceMethod("C7.VTABLE", "ILoopModeFactory", "DestroyLoopMode", pLoopModeFactory, &ILoopModeFactory::DestroyLoopMode);
-		mm_LogInterfaceTrace("C7.HOOK.ENTER", "method=ILoopModeFactory::CreateLoopMode object=%p", pLoopModeFactory);
-		int create_hook_id = SH_ADD_HOOK(ILoopModeFactory, CreateLoopMode, pLoopModeFactory, SH_MEMBER(this, &Source2Provider::Hook_CreateLoopModePost), true);
-		mm_LogInterfaceTrace("C7.HOOK.LEAVE", "method=ILoopModeFactory::CreateLoopMode hook_id=%d", create_hook_id);
-		mm_LogInterfaceTrace("C7.HOOK.ENTER", "method=ILoopModeFactory::DestroyLoopMode object=%p", pLoopModeFactory);
-		int destroy_hook_id = SH_ADD_HOOK(ILoopModeFactory, DestroyLoopMode, pLoopModeFactory, SH_MEMBER(this, &Source2Provider::Hook_DestroyLoopMode), false);
-		mm_LogInterfaceTrace("C7.HOOK.LEAVE", "method=ILoopModeFactory::DestroyLoopMode hook_id=%d", destroy_hook_id);
+		mm_LogInterfaceTrace("C7.HOOK.LEAVE", "method=ILoopModeFactory::CreateLoopMode+DestroyLoopMode object=%p", pLoopModeFactory);
 
 		if (nullptr != m_pCallbacks)
 		{
@@ -694,18 +676,13 @@ KHook::Return<void> Source2Provider::Hook_UnregisterLoopMode(IEngineServiceMgr*,
 KHook::Return<ILoopMode*> Source2Provider::Hook_CreateLoopModePost(ILoopModeFactory*)
 {
 	auto pLoopMode = *(ILoopMode**)KHook::GetOriginalValuePtr();
-	m_LoopInit.Add(pLoopMode);
-	m_LoopShutdown.Add(pLoopMode);
-	ILoopMode *pLoopMode = META_RESULT_ORIG_RET(ILoopMode *);
 	mm_LogInterfaceTrace("C8.CREATE_LOOP_MODE.ENTER", "loop_mode=%p", pLoopMode);
 	TraceInterfaceMethod("C8.VTABLE", "ILoopMode", "LoopInit", pLoopMode, &ILoopMode::LoopInit);
 	TraceInterfaceMethod("C8.VTABLE", "ILoopMode", "LoopShutdown", pLoopMode, &ILoopMode::LoopShutdown);
-	mm_LogInterfaceTrace("C8.HOOK.ENTER", "method=ILoopMode::LoopInit object=%p", pLoopMode);
-	int init_hook_id = SH_ADD_HOOK(ILoopMode, LoopInit, pLoopMode, SH_MEMBER(this, &Source2Provider::Hook_LoopInitPost), true);
-	mm_LogInterfaceTrace("C8.HOOK.LEAVE", "method=ILoopMode::LoopInit hook_id=%d", init_hook_id);
-	mm_LogInterfaceTrace("C8.HOOK.ENTER", "method=ILoopMode::LoopShutdown object=%p", pLoopMode);
-	int shutdown_hook_id = SH_ADD_HOOK(ILoopMode, LoopShutdown, pLoopMode, SH_MEMBER(this, &Source2Provider::Hook_LoopShutdownPost), true);
-	mm_LogInterfaceTrace("C8.HOOK.LEAVE", "method=ILoopMode::LoopShutdown hook_id=%d", shutdown_hook_id);
+	mm_LogInterfaceTrace("C8.HOOK.ENTER", "method=ILoopMode::LoopInit+LoopShutdown object=%p", pLoopMode);
+	m_LoopInit.Add(pLoopMode);
+	m_LoopShutdown.Add(pLoopMode);
+	mm_LogInterfaceTrace("C8.HOOK.LEAVE", "method=ILoopMode::LoopInit+LoopShutdown");
 	mm_LogInterfaceTrace("C8.CREATE_LOOP_MODE.LEAVE", "loop_mode=%p", pLoopMode);
 
 	// Post-hook. Ignored
@@ -714,13 +691,10 @@ KHook::Return<ILoopMode*> Source2Provider::Hook_CreateLoopModePost(ILoopModeFact
 
 KHook::Return<void> Source2Provider::Hook_DestroyLoopMode(ILoopModeFactory*, ILoopMode* pLoopMode)
 {
+	mm_LogInterfaceTrace("C8.DESTROY_LOOP_MODE.ENTER", "loop_mode=%p", pLoopMode);
 	m_LoopInit.Remove(pLoopMode);
 	m_LoopShutdown.Remove(pLoopMode);
-	mm_LogInterfaceTrace("C8.DESTROY_LOOP_MODE.ENTER", "loop_mode=%p", pLoopMode);
-	SH_REMOVE_HOOK(ILoopMode, LoopInit, pLoopMode, SH_MEMBER(this, &Source2Provider::Hook_LoopInitPost), true);
-	SH_REMOVE_HOOK(ILoopMode, LoopShutdown, pLoopMode, SH_MEMBER(this, &Source2Provider::Hook_LoopShutdownPost), true);
 	mm_LogInterfaceTrace("C8.DESTROY_LOOP_MODE.LEAVE", "loop_mode=%p", pLoopMode);
-	
 
 	return { KHook::Action::Ignore };
 }

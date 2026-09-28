@@ -84,7 +84,6 @@ public:
 	virtual void DLLInit_Post(int *isgdUnload)
 	{
 		mm_LogInterfaceTrace("C.BRIDGE.POST.ENTER", "");
-		SourceHook::MemFuncInfo mfi;
 
 #ifdef META_IS_SOURCE2
 		auto mfi = KHook::GetVtableIndex(&ISource2ServerConfig::Disconnect);
