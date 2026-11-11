@@ -45,8 +45,10 @@
 
 static HMODULE mm_library = NULL;
 static char mm_fatal_logfile[PLATFORM_MAX_PATH] = "metamod-fatal.log";
-static char mm_interface_logfile[PLATFORM_MAX_PATH] = "metamod-interface.log";
 MetamodBackend mm_backend = MMBackend_UNKNOWN;
+
+#if defined MMS_INTERFACE_TRACE
+static char mm_interface_logfile[PLATFORM_MAX_PATH] = "metamod-interface.log";
 
 static void
 mm_InitInterfaceLogPath()
@@ -224,6 +226,7 @@ mm_LogInterfaceVTable(const char *stage,
 		relative_address,
 		replacement);
 }
+#endif /* MMS_INTERFACE_TRACE */
 
 extern void
 mm_LogFatal(const char *message, ...)
@@ -397,6 +400,7 @@ CreateInterface(const char *name, int *ret)
 	else
 	{
 		/* If we've got a gamedll bridge, forward the request. */
+#if defined MMS_INTERFACE_TRACE
 		ptr = gamedll_bridge->QueryInterface(name, ret);
 		mm_LogInterfaceTrace("L.API.QUERY.LEAVE",
 			"name=%s result=%p ret=%d source=gamedll-bridge",
@@ -404,6 +408,9 @@ CreateInterface(const char *name, int *ret)
 			ptr,
 			ret ? *ret : -1);
 		return ptr;
+#else
+		return gamedll_bridge->QueryInterface(name, ret);
+#endif
 	}
 
 	if (ret != NULL)

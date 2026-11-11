@@ -2,11 +2,14 @@ Visit:
 
 	 http://wiki.alliedmods.net/Category:Metamod:Source_Documentation 
 	  
-	 for more information.
+ for more information.
 
 
 Interface diagnostics
 ---------------------
+
+This feature is only present in binaries built with
+`configure.py --enable-interface-trace`; it is compiled out by default.
 
 Start the game or dedicated server with -interface-trace to record Metamod's
 Source 2 interface queries, vtable slots, first calls, and hook installation.

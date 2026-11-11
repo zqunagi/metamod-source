@@ -45,6 +45,7 @@ static ISource2ServerConfig* serverconfig = NULL;
 INetworkServerService* netservice = NULL;
 IEngineServiceMgr* enginesvcmgr = NULL;
 
+#if defined MMS_INTERFACE_TRACE
 static void *
 QueryInterfaceWithTrace(const char *stage,
 						const char *factory_name,
@@ -85,6 +86,12 @@ TraceInterfaceMethod(const char *stage,
 		object,
 		KHook::GetVtableIndex(method));
 }
+#else
+/* Tracing compiled out: a plain factory call, and no vtable inspection. */
+#define QueryInterfaceWithTrace(stage, factory_name, factory, interface_name) \
+	((factory)((interface_name), NULL))
+#define TraceInterfaceMethod(...) ((void)0)
+#endif
 
 Source2Provider::Source2Provider() :
 	m_RegisterLoopMode(&IEngineServiceMgr::RegisterLoopMode, this, &Source2Provider::Hook_RegisterLoopMode, nullptr),
@@ -138,34 +145,40 @@ void Source2Provider::Notify_DLLInit_Pre(CreateInterfaceFn engineFactory,
 		"server",
 		serverFactory,
 		INTERFACEVERSION_SERVERCONFIG);
+#if defined MMS_INTERFACE_TRACE
 	if (!serverconfig)
 	{
 		mm_LogInterfaceTrace("C1.SERVER_CONFIG.FATAL",
 			"interface=%s result=<null>",
 			INTERFACEVERSION_SERVERCONFIG);
 	}
+#endif
 	netservice = (INetworkServerService*)QueryInterfaceWithTrace(
 		"C2.NETWORK_SERVICE",
 		"engine",
 		engineFactory,
 		NETWORKSERVERSERVICE_INTERFACE_VERSION);
+#if defined MMS_INTERFACE_TRACE
 	if (!netservice)
 	{
 		mm_LogInterfaceTrace("C2.NETWORK_SERVICE.OPTIONAL_MISSING",
 			"interface=%s result=<null>",
 			NETWORKSERVERSERVICE_INTERFACE_VERSION);
 	}
+#endif
 	enginesvcmgr = (IEngineServiceMgr*)QueryInterfaceWithTrace(
 		"C3.ENGINE_SERVICE_MGR",
 		"engine",
 		engineFactory,
 		ENGINESERVICEMGR_INTERFACE_VERSION);
+#if defined MMS_INTERFACE_TRACE
 	if (!enginesvcmgr)
 	{
 		mm_LogInterfaceTrace("C3.ENGINE_SERVICE_MGR.FATAL",
 			"interface=%s result=<null>",
 			ENGINESERVICEMGR_INTERFACE_VERSION);
 	}
+#endif
 
 	icvar = (ICvar*)QueryInterfaceWithTrace(
 		"C4.CVAR",
@@ -290,10 +303,12 @@ void Source2Provider::Notify_DLLInit_Pre(CreateInterfaceFn engineFactory,
 		m_ClientCommand.Add(gameclients);
 		mm_LogInterfaceTrace("C5.HOOK.LEAVE", "method=IServerGameClients::ClientCommand");
 	}
+#if defined MMS_INTERFACE_TRACE
 	else
 	{
 		mm_LogInterfaceTrace("C5.HOOK.SKIP", "reason=interface-null");
 	}
+#endif
 
 #ifdef SHOULD_OVERRIDE_ALLOWDEDICATED_SERVER
 	TraceInterfaceMethod("C1.VTABLE", "ISource2ServerConfig", "AllowDedicatedServers", serverconfig, &ISource2ServerConfig::AllowDedicatedServers);
@@ -411,6 +426,9 @@ void Source2Provider::GetGamePath(char* pszBuffer, int len)
 
 const char* Source2Provider::GetGameDescription()
 {
+#if !defined MMS_INTERFACE_TRACE
+	return serverconfig->GetGameDescription();
+#else
 	TraceInterfaceMethod("C1.VTABLE",
 		"ISource2ServerConfig",
 		"GetGameDescription",
@@ -424,6 +442,7 @@ const char* Source2Provider::GetGameDescription()
 		"method=ISource2ServerConfig::GetGameDescription result=%p",
 		description);
 	return description;
+#endif
 }
 
 #ifdef SHOULD_OVERRIDE_ALLOWDEDICATED_SERVER
@@ -445,6 +464,7 @@ void Source2Provider::ConsolePrint(const char* str)
 
 void Source2Provider::ClientConsolePrint(MMSPlayer_t client, const char* message)
 {
+#if defined MMS_INTERFACE_TRACE
 	// Called per-message at runtime, so only record the vtable slot on first use.
 	static bool traced = false;
 	if (!traced)
@@ -456,11 +476,13 @@ void Source2Provider::ClientConsolePrint(MMSPlayer_t client, const char* message
 			engine,
 			&IVEngineServer::ClientPrintf);
 	}
+#endif
 	engine->ClientPrintf(client, message);
 }
 
 void Source2Provider::ServerCommand(const char* cmd)
 {
+#if defined MMS_INTERFACE_TRACE
 	static bool traced = false;
 	if (!traced)
 	{
@@ -471,6 +493,7 @@ void Source2Provider::ServerCommand(const char* cmd)
 			engine,
 			&IVEngineServer::ServerCommand);
 	}
+#endif
 	mm_LogInterfaceTrace("C0.CALL.ENTER",
 		"method=IVEngineServer::ServerCommand cmd=%s",
 		cmd ? cmd : "<null>");
@@ -521,6 +544,7 @@ bool Source2Provider::RegisterConVar(ProviderConVar *pVar)
 
 void Source2Provider::UnregisterConCommand(ProviderConCommand *pCommand)
 {
+#if defined MMS_INTERFACE_TRACE
 	static bool traced = false;
 	if (!traced)
 	{
@@ -531,6 +555,7 @@ void Source2Provider::UnregisterConCommand(ProviderConCommand *pCommand)
 			icvar,
 			&ICvar::UnregisterConCommandCallbacks);
 	}
+#endif
 	icvar->UnregisterConCommandCallbacks(*pCommand);
 
 	// Hide command from the search, as it would still be available otherwise
@@ -539,6 +564,7 @@ void Source2Provider::UnregisterConCommand(ProviderConCommand *pCommand)
 
 void Source2Provider::UnregisterConVar(ProviderConVar *pVar)
 {
+#if defined MMS_INTERFACE_TRACE
 	static bool traced = false;
 	if (!traced)
 	{
@@ -549,6 +575,7 @@ void Source2Provider::UnregisterConVar(ProviderConVar *pVar)
 			icvar,
 			&ICvar::UnregisterConVarCallbacks);
 	}
+#endif
 	icvar->UnregisterConVarCallbacks(*pVar);
 
 	// Invalidate cvar for future use
@@ -653,7 +680,8 @@ KHook::Return<void> Source2Provider::Hook_RegisterLoopMode(IEngineServiceMgr*, c
 	mm_LogInterfaceTrace("C7.REGISTER_LOOP_MODE.LEAVE",
 		"name=%s",
 		pszLoopModeName ? pszLoopModeName : "<null>");
-		return { KHook::Action::Ignore };
+
+	return { KHook::Action::Ignore };
 }
 
 KHook::Return<void> Source2Provider::Hook_UnregisterLoopMode(IEngineServiceMgr*, const char* pszLoopModeName, ILoopModeFactory* pLoopModeFactory, void** ppGlobalPointer)
@@ -713,6 +741,16 @@ KHook::Return<bool> Source2Provider::Hook_LoopInitPost(ILoopMode*, KeyValues* pK
 		pRegistry);
 	if (nullptr != m_pCallbacks)
 	{
+#if !defined MMS_INTERFACE_TRACE
+		m_pCallbacks->OnLevelInit(
+			pKeyValues->GetString("levelname"),
+			"",
+			pKeyValues->GetString("previouslevel"),
+			pKeyValues->GetString("landmarkname"),
+			pKeyValues->GetBool("loadmap"),
+			false
+		);
+#else
 		// Read the KeyValues up front, separately from the callback, so the trace
 		// tells a bad KeyValues layout apart from a plugin failing in OnLevelInit.
 		mm_LogInterfaceTrace("C8.LOOP_INIT.KV.ENTER", "keyvalues=%p", pKeyValues);
@@ -737,6 +775,7 @@ KHook::Return<bool> Source2Provider::Hook_LoopInitPost(ILoopMode*, KeyValues* pK
 			false
 		);
 		mm_LogInterfaceTrace("C8.CALLBACK.LEAVE", "method=OnLevelInit");
+#endif
 	}
 	mm_LogInterfaceTrace("C8.LOOP_INIT.LEAVE", "complete=1");
 
@@ -759,7 +798,9 @@ KHook::Return<void> Source2Provider::Hook_LoopShutdownPost(ILoopMode*)
 		mm_LogInterfaceTrace("C8.CALLBACK.LEAVE", "method=OnLevelShutdown");
 	}
 	mm_LogInterfaceTrace("C8.LOOP_SHUTDOWN.LEAVE", "complete=1");
-	return { KHook::Action::Ignore };}
+
+	return { KHook::Action::Ignore };
+}
 
 KHook::Return<void> Source2Provider::Hook_ClientCommand(IServerGameClients*, CPlayerSlot nSlot, const CCommand& _cmd)
 {

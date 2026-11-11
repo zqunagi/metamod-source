@@ -24,11 +24,13 @@
  */
 
 #include <cstdio>
+#if defined MMS_INTERFACE_TRACE
 #include <cstdarg>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#endif
 #include <sys/stat.h>
 
 #include "metamod_oslink.h"
@@ -96,12 +98,15 @@ static CreateInterfaceFn filesystem_factory = NULL;
 static IServerPluginCallbacks *vsp_callbacks = NULL;
 static bool were_plugins_loaded = false;
 static bool g_bIsVspBridged = false;
+#if defined MMS_INTERFACE_TRACE
 static char mm_interface_logfile[PATH_SIZE] = "metamod-interface.log";
+#endif
 
 MetamodSource g_Metamod;
 PluginId g_PLID = Pl_Console;
 SourceMM::ISmmAPI *g_pMetamod = &g_Metamod;
 
+#if defined MMS_INTERFACE_TRACE
 static void
 mm_InitInterfaceLogPath()
 {
@@ -263,6 +268,7 @@ mm_LogInterfaceVTable(const char *stage,
 		relative_address,
 		replacement);
 }
+#endif /* MMS_INTERFACE_TRACE */
 
 /* Helper Macro */
 #define	IFACE_MACRO(orig,nam) \

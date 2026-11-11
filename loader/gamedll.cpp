@@ -386,10 +386,12 @@ public:
 				mm_UnloadMetamodLibrary();
 				mm_LogFatal("Unknown error loading Metamod for engine %d: %s", mm_backend, error);	
 			}
+#if defined MMS_INTERFACE_TRACE
 			else
 			{
 				mm_LogInterfaceTrace("L2.BRIDGE.PRE.LEAVE", "result=1");
 			}
+#endif
 		}
 
 		/* Call the original */
@@ -811,12 +813,14 @@ mm_GameDllRequest(const char *name, int *ret)
 			name,
 			gamedll_iface,
 			ret ? *ret : -1);
+#if defined MMS_INTERFACE_TRACE
 		if (!gamedll_iface)
 		{
 			mm_LogInterfaceTrace("L1.QUERY.FATAL",
 				"name=%s result=<null>",
 				name);
 		}
+#endif
 		strncpy(gamedll_iface_name, name, sizeof(gamedll_iface_name));
 		gamedll_version = atoi(&name[13]);
 		mm_PatchDllInit(true);

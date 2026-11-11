@@ -111,6 +111,7 @@ mm_DetectGameInformation();
 int
 mm_LogMessage(const char *msg, ...);
 
+#if defined MMS_INTERFACE_TRACE
 bool
 mm_IsInterfaceTraceEnabled();
 
@@ -124,6 +125,12 @@ mm_LogInterfaceVTable(const char *stage,
 					  void *object,
 					  int slot,
 					  void *replacement = NULL);
+#else
+/* Interface tracing is compiled out; these expand to nothing and never evaluate their arguments. */
+#define mm_IsInterfaceTraceEnabled() false
+#define mm_LogInterfaceTrace(...) ((void)0)
+#define mm_LogInterfaceVTable(...) ((void)0)
+#endif
 
 int
 mm_LoadPlugins(const char *filepath, const char *vdfpath);

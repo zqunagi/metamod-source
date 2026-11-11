@@ -103,6 +103,7 @@ public:
 	}
 	virtual void *QueryInterface(const char *iface, int *ret)
 	{
+#if defined MMS_INTERFACE_TRACE
 		mm_LogInterfaceTrace("C.BRIDGE.QUERY.ENTER", "interface=%s", iface ? iface : "<null>");
 		void *result = g_Metamod.GetServerFactory(true)(iface, ret);
 		mm_LogInterfaceTrace("C.BRIDGE.QUERY.LEAVE",
@@ -110,6 +111,9 @@ public:
 			iface ? iface : "<null>",
 			result);
 		return result;
+#else
+		return g_Metamod.GetServerFactory(true)(iface, ret);
+#endif
 	}
 	virtual void Unload()
 	{

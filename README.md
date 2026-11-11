@@ -35,7 +35,7 @@ ambuild
 You can clone an individual SDK e.g.:
 ```
 cd ..
-metamod-source/support/checkout-deps.sh -s episode1
+metamod-source/support/checkout-deps.sh -s cs2
 cd metamod-source
 ```
 
@@ -43,7 +43,7 @@ You can configure the build for an individual SDK e.g.:
 ```
 mkdir build
 cd build
-python ../configure.py --sdks episode1
+python ../configure.py --sdks cs2 --enable-interface-trace
 ```
 
 Stable build snapshots: <http://www.metamodsource.net/downloads.php/?branch=stable>

@@ -124,6 +124,7 @@ mm_UnloadMetamodLibrary();
 extern void
 mm_LogFatal(const char *message, ...);
 
+#if defined MMS_INTERFACE_TRACE
 extern bool
 mm_IsInterfaceTraceEnabled();
 
@@ -137,6 +138,12 @@ mm_LogInterfaceVTable(const char *stage,
 					  void *object,
 					  int slot,
 					  void *replacement = NULL);
+#else
+/* Interface tracing is compiled out; these expand to nothing and never evaluate their arguments. */
+#define mm_IsInterfaceTraceEnabled() false
+#define mm_LogInterfaceTrace(...) ((void)0)
+#define mm_LogInterfaceVTable(...) ((void)0)
+#endif
 
 extern void
 mm_GetGameName(char *buffer, size_t size);

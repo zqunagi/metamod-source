@@ -263,6 +263,8 @@ class MMSConfig(object):
 
     # Finish up.
     cxx.defines += [ 'MMS_USE_VERSIONLIB' ]
+    if builder.options.enable_interface_trace:
+      cxx.defines += ['MMS_INTERFACE_TRACE']
     cxx.includes += [
       os.path.join(builder.sourcePath, 'public'),
       os.path.join(builder.sourcePath, 'third_party', 'amtl'),
