@@ -286,6 +286,7 @@ static const char *backend_names[] =
 	"2.mcv",
 	"2.cs2",
 	"2.deadlock",
+	"2.outbreak",
 };
 
 #if defined _WIN32
@@ -491,6 +492,11 @@ mm_DetermineBackendS1(QueryValveInterface engineFactory, QueryValveInterface ser
 
 		if (serverFactory("VSERVERTOOLS003", NULL) != NULL)
 		{
+			if (engineFactory("VFileSystem018", NULL) != NULL)
+			{
+				return MMBackend_Outbreak;
+			}
+
 			return MMBackend_Blade;
 		}
 
